@@ -1,0 +1,105 @@
+Program.Sub.ScreenSU.Start
+Gui.Form..Create
+Gui.Form..Caption("Credentials")
+Gui.Form..Size(4335,3060)
+Gui.Form..MinX(0)
+Gui.Form..MinY(0)
+Gui.Form..Position(0,0)
+Gui.Form..BackColor(-2147483633)
+Gui.Form..MousePointer(0)
+Gui.Form..Event(UnLoad,Form_UnLoad)
+Gui.Form.lbl1.Create(Label,"User",True,570,255,0,75,90,True,0,"Arial",8,-2147483633,0)
+Gui.Form.txtUser.Create(TextBox,"",True,4020,300,0,30,300,True,0,"Arial",8,-2147483643,1)
+Gui.Form.cmdSave.Create(Button)
+Gui.Form.cmdSave.Size(855,375)
+Gui.Form.cmdSave.Position(3060,1965)
+Gui.Form.cmdSave.Caption("Save")
+Gui.Form.cmdSave.Event(Click,cmdSave_Click)
+Gui.Form.lbl2.Create(Label,"Password",True,975,255,0,60,660,True,0,"Arial",8,-2147483633,0)
+Gui.Form.txtPassword.Create(TextBox,"",True,3990,300,0,45,885,True,0,"Arial",8,-2147483643,1)
+Gui.Form.lbl3.Create(Label,"Security Token",True,1395,255,0,75,1335,True,0,"Arial",8,-2147483633,0)
+Gui.Form.txtSecTok.Create(TextBox,"",True,3990,300,0,45,1560,True,0,"Arial",8,-2147483643,1)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local..BulkDeclareString(sRet, ssql)
+'created for the login to SalesForce
+'this script will allow the user to change login credentials
+
+F.ODBC.Connection!conG.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+
+F.ODBC.Connection!conG.ExecuteAndReturn("Select * From GCG_4508_CONNECTION Where NUM = '1'", V.Local.sRet)
+Function.Intrinsic.Control.If(V.Local.sRet, =, "")
+	'then this is the first time- add a row to the table setting Num = 1
+	F.ODBC.Connection!conG.Execute("Insert Into GCG_4508_CONNECTION (NUM) Values (1)")
+Function.Intrinsic.Control.Else
+	'populate text boxes with current values
+	F.Intrinsic.String.Split(V.Local.sRet, "*!*", V.Local.sRet)
+	GUI.Form.txtUser.Text(V.Local.sRet(1))
+	Gui.Form.txtPassword.Text(V.Local.sRet(2))
+	GUI.Form.txtSecTok.Text(V.Local.sRet(3))
+Function.Intrinsic.Control.EndIf
+
+GUI.Form..Show
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Connection_SF.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(form_unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Main.End
+
+Program.Sub.cmdSave_Click.Start
+F.Intrinsic.Control.SetErrorHandler("cmdSave_Click_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local..BulkDeclareString(ssql, sUser, sPass, sSecTok)
+GUI.Form..Visible(False)
+V.Local.sUser.Set(V.Screen.Form!txtUser.Text)
+V.Local.sPass.Set(V.Screen.Form!txtPassword.Text)
+V.Local.sSecTok.Set(V.Screen.Form!txtSecTok.Text)
+F.Intrinsic.String.Build("UPDATE GCG_4508_CONNECTION Set USER_NAME = '{0}', PASS = '{1}', SECTOK = '{2}' Where NUM = '1'",V.Local.sUser,V.Local.sPass ,V.Local.sSecTok, V.Local.ssql)
+F.ODBC.Connection!conG.Execute(V.Local.ssql)
+F.Intrinsic.Control.CallSub(form_unload)
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("cmdSave_Click_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Connection_SF.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(form_unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.cmdSave_Click.End
+
+Program.Sub.Form_Unload.Start
+F.Intrinsic.Control.SetErrorHandler("Form_Unload_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+GUI.Form..Visible(False)
+F.ODBC.Connection!conG.Close
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Form_Unload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Connection_SF.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.End
+
+Function.Intrinsic.Control.EndIf
+Program.Sub.Form_Unload.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$DH1$}$6/13/2017 1:03:25 PM$}$False
+Program.Sub.Comments.End
