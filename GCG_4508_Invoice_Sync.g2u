@@ -1,0 +1,114 @@
+Program.Sub.Preflight.Start
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local..BulkDeclareString(sRet, sConString)
+V.Local.bExists.Declare(Boolean)
+V.Local.iDay.Declare(Long)
+V.Local.iHour.Declare(Long)
+'Dawn Hughes 8/30/2017 SWEED
+'this program will sync invoice from GSS to salesforce HOOK # 15220 
+F.Intrinsic.Date.Weekday(V.Ambient.Now,V.Local.iDay)
+F.Intrinsic.Date.Hour(V.Ambient.Now,V.Local.iHour)
+
+F.Intrinsic.Control.If(V.Local.iDay,>,1,"AND",V.Local.iDay,<,7)
+	F.Intrinsic.Control.If(V.Local.iHour,>,5,"AND",V.Local.iHour,<,19)
+		'gather data
+		F.Intrinsic.Control.If(v.Caller.Hook,=,"15220")
+			'GSS Connection
+			F.ODBC.Connection!con.OpenConnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass) 
+			
+			'Sales Force Connection
+			F.ODBC.Connection!con.ExecuteAndReturn("Select rTrim(USER_NAME), rTrim(PASS), rTrim(SECTOK) From GCG_4508_CONNECTION Where NUM = '1'", V.Local.sRet)
+			F.Intrinsic.String.Split(V.Local.sRet, "*!*", V.Local.sRet)
+			F.Intrinsic.String.Build("Offline=False;Password={1};Security Token={2};User={0};Use Sandbox=False",V.Local.sRet(0),V.Local.sRet(1),V.Local.sRet(2),v.Local.sConString) 
+			'Set Connection String 
+			F.Automation.SalesForce.SetConnectionString(V.Local.sConString)
+		
+			Function.Intrinsic.Control.CallSub(invoice)
+			F.Intrinsic.Control.CallSub(Unload)
+		Function.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Invoice_Sync.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Main.End
+
+Program.Sub.Invoice.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local..BulkDeclareString(sInvoice, ssql, sID, sOrder, sDate, sOrderId)
+V.Local.iC.Declare(Long)
+
+V.Local.sInvoice.Set(V.Passed.009000)
+
+F.Intrinsic.String.Build("Select ORDER_NO, DATE_INVOICE, PART, Date_Shipped From V_ORDER_HIST_LINE Where Invoice = '{0}'", V.Local.sInvoice, V.Local.ssql)
+F.Data.DataTable.CreateFromSQL("LINE", "con", V.Local.ssql)
+
+V.Local.sOrder.Set(V.DataTable.LINE(0).ORDER_NO!FieldValTrim)
+F.Intrinsic.String.LPad(V.Local.sOrder, "0", 7, V.Local.sOrder)
+
+F.Intrinsic.String.Build("Select ID as OrderID,  GS_ORDER_ID__C As OrderNumber  From [Order] Where GS_ORDER_ID__C = '{0}'", V.Local.sOrder, V.Local.ssql)
+Function.Automation.SalesForce.SelectToDataTable("SF", True, V.Local.ssql)
+
+F.Intrinsic.Control.If(V.DataTable.SF.RowCount, =, 0)
+	Function.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.For(V.Local.iC, 0, V.DataTable.LINE.RowCount--, 1)
+
+	F.Intrinsic.String.Build("Select Id  From Shipping_Invoicing__c Where ordee__c = '{0}' And Part_Number__c = '{1}' And Date_Shipped__c = '{2}' ", V.DataTable.SF(0).OrderID!FieldValTrim, V.DataTable.LINE(V.Local.iC).PART!FieldValTrim,V.DataTable.LINE(V.Local.iC).Date_Shipped!FieldValTrim, V.Local.ssql)
+	Function.Automation.SalesForce.SelectToDataTable("tID", True, V.Local.ssql)
+	
+	Function.Intrinsic.Control.If(V.DataTable.tID(0).Id!FieldValTrim, <>, "")
+		F.Intrinsic.String.Build("Update Shipping_Invoicing__c Set Date_Invoiced__c = '{0}', Invoice_Number__c = '{1}' Where Id = '{2}'", V.DataTable.LINE(V.Local.iC).DATE_INVOICE!FieldValTrim, V.Local.sInvoice,V.DataTable.tID(0).Id!FieldValTrim, V.Local.ssql)
+		F.Automation.SalesForce.ExecuteSQL(v.Local.ssql)
+	Function.Intrinsic.Control.EndIf
+	
+	F.Data.DataTable.Close("tID")
+F.Intrinsic.Control.Next(V.Local.iC)
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Invoice_Sync.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Invoice.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.SetErrorHandler("Unload_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+'close the connection and program
+F.ODBC.Connection!con.Close 
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Unload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Invoice_Sync.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.End
+
+Function.Intrinsic.Control.EndIf
+Program.Sub.Unload.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$$}$12:00:00 AM$}$False
+${$3$}$0$}$$}$0$}$-1$}$$}$12:00:00 AM$}$This project will upload sales order via the web importer
+Program.Sub.Comments.End
