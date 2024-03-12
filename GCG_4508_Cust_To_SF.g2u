@@ -1,0 +1,160 @@
+Program.Sub.Preflight.Start
+V.Global.iAPICount.Declare(Long)
+V.Global.sFileContents.Declare(String)
+V.Global.sFilePath.Declare(String)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+V.Local.iDay.Declare(Long)
+V.Local.iHour.Declare(Long)
+V.Local.bExists.Declare(Boolean)
+
+V.Local..BulkDeclareString(sRet, sConString)
+
+V.Local.sDate.Declare(String)
+
+F.Intrinsic.Date.Weekday(V.Ambient.Now,V.Local.iDay)
+F.Intrinsic.Date.Hour(V.Ambient.Now,V.Local.iHour)
+
+
+F.Intrinsic.Control.If(V.Local.iDay,>,1,"AND",V.Local.iDay,<,7)
+	F.Intrinsic.Control.If(V.Local.iHour,>,5,"AND",V.Local.iHour,<,19)
+		'If the directories don't exist, go ahead and create them
+		F.Intrinsic.String.Build("{0}\API_COUNT",V.Caller.FilesDir,V.Global.sFilePath)
+		F.Intrinsic.File.DirExists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,=,False)
+			F.Intrinsic.File.CreateDir(V.Global.sFilePath)
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("{0}\Cust_To_SF",V.Global.sFilePath,V.Global.sFilePath)
+		F.Intrinsic.File.DirExists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,=,False)
+			F.Intrinsic.File.CreateDir(V.Global.sFilePath)
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("{0}\API_Count_{1}.txt",V.Global.sFilePath,V.Local.sDate,V.Global.sFilePath)
+		F.Intrinsic.File.Exists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,<>,False)
+			F.Intrinsic.File.File2String(V.Global.sFilePath,V.Global.sFileContents)
+			F.Intrinsic.String.Build("{0}{1}{2}",V.Global.sFileContents,V.Ambient.NewLine,V.Ambient.Now,V.Global.sFileContents)
+		F.Intrinsic.Control.Else
+			V.Global.sFileContents.Set(V.Ambient.Now)
+		F.Intrinsic.Control.EndIf
+		
+		V.Global.iAPICount.Set(0)
+		
+		'Dawn Hughes 8/30/2017
+		'This runs from the customer master when the user saves. Hook# 14385 This will send over Credit Limit, Credit Hold, SIC Code, On Shipping Hold, and Terms to Sales Force From Global Shop
+		Function.Intrinsic.Control.If(V.Caller.Hook, =, 14385)
+			'GSS Connection
+			F.ODBC.Connection!conG.OpenConnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass) 
+			
+			'Sales Force Connection
+			F.ODBC.Connection!conG.ExecuteAndReturn("Select rTrim(USER_NAME), rTrim(PASS), rTrim(SECTOK) From GCG_4508_CONNECTION Where NUM = '1'", V.Local.sRet)
+			F.Intrinsic.String.Split(V.Local.sRet, "*!*", V.Local.sRet)
+			F.Intrinsic.String.Build("Offline=False;Password={1};Security Token={2};User={0};Use Sandbox=False",V.Local.sRet(0),V.Local.sRet(1),V.Local.sRet(2),v.Local.sConString) 
+			'Set Connection String 
+			F.Automation.SalesForce.SetConnectionString(V.Local.sConString)
+			
+			Function.Intrinsic.Control.CallSub(send_info)
+		Function.Intrinsic.Control.Endif
+		
+		Function.Intrinsic.Control.CallSub(unload)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Cust_To_SF.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Main.End
+
+Program.Sub.Send_Info.Start
+F.Intrinsic.Control.SetErrorHandler("Send_Info_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+'SicDesc, on_shipping_hold__c
+V.Local..BulkDeclareString(sCredit, sHold, sTerms, sCust, ssql, sSIC, sShipHold)
+V.Local.sCredit.Set(V.Passed.000035)
+V.Local.sHold.Set(V.Passed.000037)
+
+Function.Intrinsic.Control.If(V.Local.sHold, =, "Y")
+	V.Local.sHold.Set(true)
+Function.Intrinsic.Control.Else
+	V.Local.sHold.Set(false)
+Function.Intrinsic.Control.EndIf
+
+V.Local.sTerms.Set(V.Passed.000041)
+V.Local.sCust.Set(V.Passed.000002)
+V.Local.sSIC.Set(V.Passed.000032)
+V.Local.sShipHold.Set(V.Passed.000095)
+
+Function.Intrinsic.Control.If(V.Local.sShipHold, =, "Y")
+	V.Local.sShipHold.Set(true)
+Function.Intrinsic.Control.Else
+	V.Local.sShipHold.Set(false)
+Function.Intrinsic.Control.EndIf
+	
+'first get the id from salesforce for this customer
+
+F.Intrinsic.String.Build("Select ID From Account Where GS_Customer_ID__c = '{0}'", V.Local.sCust, V.Local.ssql)
+Function.Automation.SalesForce.SelectToDataTable("SF", True,V.Local.ssql)
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+
+'update the table in salesforce
+'check the table returned a row...the customer number exists in Salesforce
+
+F.Intrinsic.Control.If(V.DataTable.SF.RowCount,>,0) 
+	F.Intrinsic.String.Build("Update Account Set Credit_Limit__c='{0}', Terms__c='{1}', On_Credit_Hold__c='{2}', Sic='{3}', on_shipping_hold__c='{4}'  Where ID = '{5}'", V.Local.sCredit, V.Local.sTerms, V.Local.sHold, V.Local.sSIC, V.Local.sShipHold,V.DataTable.SF(0).ID!FieldValTrim,V.Local.ssql)
+	F.Automation.SalesForce.ExecuteSQL(v.Local.ssql)
+	F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+Function.Intrinsic.Control.Else
+	F.Intrinsic.UI.Msgbox("This Customer Number Does Not Exist In Sales Force")
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Send_Info_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Cust_To_SF.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Send_Info.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.SetErrorHandler("Unload_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+F.Intrinsic.String.Build("{0}: {1} - End:{2}",V.Global.sFileContents,V.Global.iAPICount,V.Ambient.Now,V.Global.sFileContents)
+F.Intrinsic.File.String2File(V.Global.sFilePath,V.Global.sFileContents)
+
+'close connection
+Function.ODBC.Connection!conG.Close
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Unload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Cust_To_SF.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.End
+
+Function.Intrinsic.Control.EndIf
+Program.Sub.Unload.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$DH1$}$8/21/2017 4:04:07 PM$}$False
+${$3$}$0$}$$}$0$}$-1$}$$}$12:00:00 AM$}$This will send over Credit Limit, Credit Hold, and Terms to Sales Force From Global Shop
+Program.Sub.Comments.End
