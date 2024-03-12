@@ -1,0 +1,882 @@
+Program.Sub.Preflight.Start
+V.Global.sLastDate.Declare(String)
+V.Global.iUserID.Declare(Long)
+V.Global.sFilePath.Declare(String)
+V.Global.iAPICount.Declare(Long)
+V.Global.sFileContents.Declare(String)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+V.Local.bExists.Declare(Boolean)
+V.Local.sDate.Declare(String)
+V.Local.iDay.Declare(Long)
+V.Local.iHour.Declare(Long)
+
+F.Intrinsic.Date.Weekday(V.Ambient.Now,V.Local.iDay)
+F.Intrinsic.Date.Hour(V.Ambient.Now,V.Local.iHour)
+
+	
+F.Intrinsic.Control.If(V.Local.iDay,>,1,"AND",V.Local.iDay,<,7)
+	F.Intrinsic.Control.If(V.Local.iHour,>,5,"AND",V.Local.iHour,<,19)
+	
+		F.Global.Security.getuserid(V.Caller.User,V.Caller.CompanyCode,V.Global.iUserId)
+		
+		'Dawn Hughes 8/30/2017
+		'Copies customers in Sales force to GSS SWEED
+		
+		V.Local..BulkDeclareString(sRet, sConString)
+		
+		'GSS Connection
+		F.ODBC.Connection!conG.OpenConnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass, 1000000000) 
+		
+		'Sales Force Connection
+		F.ODBC.Connection!conG.ExecuteAndReturn("Select rTrim(USER_NAME), rTrim(PASS), rTrim(SECTOK) From GCG_4508_CONNECTION Where NUM = '1' ", V.Local.sRet)
+		F.Intrinsic.String.Split(V.Local.sRet, "*!*", V.Local.sRet)
+		F.Intrinsic.String.Build("Offline=False;Password={1};Security Token={2};User={0};UseSandbox=False; ServerSideAggregation=False;",V.Local.sRet(0),V.Local.sRet(1),V.Local.sRet(2),v.Local.sConString) 
+		'Set Connection String
+		F.Automation.SalesForce.SetConnectionString(V.Local.sConString)
+		
+		F.Intrinsic.String.Format(V.Ambient.Date,"MMDDYYYY",V.Local.sDate)
+		
+		'If the directories don't exist, go ahead and create them
+		F.Intrinsic.String.Build("{0}\API_COUNT",V.Caller.FilesDir,V.Global.sFilePath)
+		F.Intrinsic.File.DirExists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,=,False)
+			F.Intrinsic.File.CreateDir(V.Global.sFilePath)
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("{0}\CUSTOMER",V.Global.sFilePath,V.Global.sFilePath)
+		F.Intrinsic.File.DirExists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,=,False)
+			F.Intrinsic.File.CreateDir(V.Global.sFilePath)
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("{0}\API_Count_{1}.txt",V.Global.sFilePath,V.Local.sDate,V.Global.sFilePath)
+		F.Intrinsic.File.Exists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,<>,False)
+			F.Intrinsic.File.File2String(V.Global.sFilePath,V.Global.sFileContents)
+			F.Intrinsic.String.Build("{0}{1}{2}",V.Global.sFileContents,V.Ambient.NewLine,V.Ambient.Now,V.Global.sFileContents)
+		F.Intrinsic.Control.Else
+			V.Global.sFileContents.Set(V.Ambient.Now)
+		F.Intrinsic.Control.EndIf
+		
+		V.Global.iAPICount.Set(0)
+		
+		'Get the Highest order number in Sales Force and save it to the database GCG_4508_Contact set LAST_DATE = (order number) where LAST_CONTACT = '4'
+		F.Intrinsic.Control.CallSub(OrderNumber)
+		
+		'get data from Sales Force
+		F.Intrinsic.Control.CallSub(Get_Data_Cust)
+		
+		'create file and upload
+		F.Intrinsic.Control.CallSub(Create_File_Cust)
+		
+		'upload updates and xtras
+		F.Intrinsic.Control.CallSub(CUST_XTRA)
+		
+		'file and upload ADDl ship to info...different call wrapper
+		Function.Intrinsic.Control.CallSub(ADDL_SHIP)
+		
+		'get data from Sales Force and Upload
+		F.Intrinsic.Control.CallSub(Get_Data_Contact)
+		
+		'close program
+		Function.Intrinsic.Control.CallSub(Unload)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: GCG_4508_Cust_To_GSS: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Ambient.ScriptPath, V.Ambient.Newline, V.Ambient.CurrentSubroutine, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+    F.Intrinsic.UI.Msgbox(V.Local.sError)
+    Function.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.Main.End
+
+Program.Sub.OrderNumber.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+V.Local.ssql.Declare(String)
+
+'select the highest number and save to database- this is at time customers are created
+Function.Automation.SalesForce.SelectToDataTable("O", True,"Select Top 1 Right(GS_ORDER_ID__c, 7) As OrderNumber From [Order]  Order By GS_ORDER_ID__c desc")
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+
+F.Intrinsic.Control.If(V.DataTable.O.RowCount, >, 0)
+	F.Intrinsic.String.Build("Update GCG_4508_Contact Set LAST_DATE = '{0}' Where LAST_CONTACT = '4' ",V.DataTable.O(0).OrderNumber!FieldValString, V.Local.ssql)
+	F.ODBC.Connection!conG.Execute(V.Local.ssql)
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: GCG_4508_Cust_To_GSS: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Ambient.ScriptPath, V.Ambient.Newline, V.Ambient.CurrentSubroutine, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+    F.Global.Messaging.queuemessage(V.Caller.CompanyCode,V.Global.iUserId.Trim,V.Caller.Caller,"Order Sync Program","onlineupdate@sweed.com","onlineupdate@sweed.com",V.Local.sError)	
+    Function.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.OrderNumber.End
+
+Program.Sub.Get_Data_Cust.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+V.Local..BulkDeclareString(ssql)
+V.Local.dLastSync.Declare(Date)
+V.Local.iC.Declare(Long)
+ V.Local.dLastSync.Set(v.Ambient.Now)
+
+F.ODBC.Connection!conG.ExecuteAndReturn("Select LAST_DATE From GCG_4508_Contact Where LAST_CONTACT = '3'", V.Global.sLastDate)
+Function.Intrinsic.Control.If(V.Global.sLastDate, =, "")
+	'then first time- need to insert current time
+	F.Intrinsic.String.Build("Insert Into GCG_4508_Contact (LAST_CONTACT, LAST_DATE) Values ('3', '{0}')", v.Local.dLastSync, V.Local.ssql)
+	F.ODBC.Connection!conG.Execute(V.Local.ssql)
+	'first time...select all for query
+	V.Local.ssql.Set("Select ID, GS_Customer_ID__c as Customer,Name,International__c, LastModifiedDate,Fax,Terms__c,Website,Sic,Credit_Limit__c, Email__c,OwnerId,credit_limit__c, Phone,On_credit_hold__c, Shipment_Carrier__c, on_shipping_hold__c, X3rd_party_freight_customer__c,Email_Invoice_Only__c,Invoice_Delivery_Method__c, BillingStreet, BillingCity, BillingState, BillingPostalCode, BillingCountry,  ShippingStreet, ShippingCity, ShippingState, ShippingPostalCode, ShippingCountry From Account Where GS_Customer_ID__c <>  '' ")
+Function.Intrinsic.Control.Else
+	'then update the table
+	F.Intrinsic.String.Build("Update GCG_4508_Contact Set LAST_DATE = '{0}' Where LAST_CONTACT = '3'", v.Local.dLastSync, V.Local.ssql)
+	F.ODBC.Connection!conG.Execute(V.Local.ssql)
+	'use the last date to build query
+	F.Intrinsic.String.Build("Select ID, GS_Customer_ID__c as Customer, Name,International__c,LastModifiedDate,LastModifiedById, Fax,Terms__c,  Website,Sic,Credit_Limit__c, Email__c,OwnerId, credit_limit__c, Phone,On_credit_hold__c, Shipment_Carrier__c, on_shipping_hold__c, X3rd_party_freight_customer__c,Email_Invoice_Only__c,Invoice_Delivery_Method__c, BillingStreet, BillingCity, BillingState, BillingPostalCode, BillingCountry,  ShippingStreet, ShippingCity, ShippingState, ShippingPostalCode, ShippingCountry From Account Where GS_Customer_ID__c <> '' And LastModifiedDate > '{0}'", V.Global.sLastDate, V.Local.ssql)
+Function.Intrinsic.Control.EndIf
+
+Function.Automation.SalesForce.SelectToDataTable("MSTR", True, V.Local.ssql)
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+
+'credit hold conversion to Y/N
+F.Data.DataTable.AddExpressionColumn("MSTR", "On_credit_hold__c2", "String", "IIF(On_credit_hold__c = 'true', 'Y', 'N')")
+'on_shipping_hold__c conversion to Y/N
+F.Data.DataTable.AddExpressionColumn("MSTR", "on_shipping_hold__c2", "String", "IIF(on_shipping_hold__c = 'true', 'Y', 'N')")
+'Email_Invoice_Only__c conversion to Y/N
+F.Data.DataTable.AddExpressionColumn("MSTR", "Email_Invoice_Only__c2", "String", "IIF(Email_Invoice_Only__c = 'true', 'Y', 'N')")
+'International__c conversion to Y/N
+F.Data.DataTable.AddExpressionColumn("MSTR", "International__c2", "String", "IIF(International__c = 'true', 'Y', 'N')")
+
+'from USER table get salesperson
+F.Data.DataTable.AddColumn("MSTR", "SalesPerson", "String")
+Function.Automation.SalesForce.SelectToDataTable("Sales", True, "Select Id as OwnerId, External_ID__c As SalesPerson From User")
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+F.Data.Dictionary.CreateFromDatatable("dict", "Sales",  "OwnerId", "SalesPerson",1,True)
+F.Data.Dictionary.SetDefaultReturn("dict", "")
+F.Data.DataTable.FillFromDictionary("MSTR", "dict", "OwnerId", "SalesPerson")
+F.Data.Dictionary.Close("dict")
+
+'from V_CUSTOMER_MASTER  table get GSS_CUSTOMER
+F.Data.DataTable.AddColumn("MSTR", "GSS_CUSTOMER", "String")
+F.Data.Dictionary.CreateFromSQL("Dict", "conG", "Select rTrim(CUSTOMER) As Customer, rTrim(CUSTOMER) As GSS_CUSTOMER From V_CUSTOMER_MASTER ")
+F.Data.Dictionary.SetDefaultReturn("dict", "")
+F.Data.DataTable.FillFromDictionary("MSTR", "dict", "Customer", "GSS_CUSTOMER")
+F.Data.Dictionary.Close("dict")
+
+'get terms code
+F.Data.DataTable.AddColumn("MSTR", "TERMS", "String")
+F.Data.Dictionary.CreateFromSQL("Dict", "conG", "Select rTrim(TERMS_MESSAGE) As Terms__c, TERMS_CODE As TERMS From V_AR_TERMS ")
+F.Data.Dictionary.SetDefaultReturn("dict", "")
+F.Data.DataTable.FillFromDictionary("MSTR", "dict", "Terms__c", "TERMS")
+F.Data.Dictionary.Close("dict")
+F.Data.DataTable.AddExpressionColumn("MSTR",  "TERMS2", "String", "SUBSTRING(TERMS, 1, 1)")
+
+'shorten Shipment_Carrier__c
+F.Data.DataTable.AddExpressionColumn("MSTR",  "Shipment_Carrier__c2", "String", "SUBSTRING(Shipment_Carrier__c, 1, 6)")
+
+'shorten email
+F.Data.DataTable.AddExpressionColumn("MSTR",  "Email", "String", "SUBSTRING(Email__c, 1, 43)")
+'shorten Name
+F.Data.DataTable.AddExpressionColumn("MSTR",  "Name2", "String", "SUBSTRING(Name, 1, 30)")
+
+'get CREDIT_CODE code
+F.Data.DataTable.AddColumn("MSTR", "CREDIT_CODE", "String")
+F.Data.Dictionary.CreateFromSQL("Dict", "conG", "Select CREDIT_AMOUNT as Credit_Limit__c, CREDIT_CODE From V_AR_CREDIT_LIMIT ")
+F.Data.Dictionary.SetDefaultReturn("dict", "")
+F.Data.DataTable.FillFromDictionary("MSTR", "dict", "Credit_Limit__c", "CREDIT_CODE")
+F.Data.Dictionary.Close("dict")
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: GCG_4508_Cust_To_GSS: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Ambient.ScriptPath, V.Ambient.Newline, V.Ambient.CurrentSubroutine, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+    F.Global.Messaging.queuemessage(V.Caller.CompanyCode,V.Global.iUserId.Trim,V.Caller.Caller,"Order Sync Program","onlineupdate@sweed.com","onlineupdate@sweed.com",V.Local.sError)	
+    Function.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.Get_Data_Cust.End
+
+Program.Sub.Create_File_Cust.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+V.Local..BulkDeclareString(sTemp, sData, sFile, sDataAll)
+V.Local..BulkDeclareLong(iC)
+V.Local.bEx.Declare(Boolean)
+
+'create text file for upload > CUSTOMER.TXT
+'loop through dataTable MSTR
+'check if we need to update
+
+F.Intrinsic.Control.If(V.DataTable.MSTR.RowCount, =, 0)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.For(V.Local.iC, 0, V.DataTable.MSTR.RowCount--, 1)
+	'first check if the customer already exists- if the customer already exists then skip this call wrapper upload
+	F.Intrinsic.Control.If(V.DataTable.MSTR(V.Local.iC).GSS_CUSTOMER!FieldValTrim, =, "")
+		'reset sData	
+		V.Local.sData.Set("")
+		'Customer Number (6)
+		V.Local.sTemp.Set(V.DataTable.MSTR(V.Local.iC).Customer!FieldValTrim)
+		F.Intrinsic.String.RPad(V.Local.sTemp, " ", 6, V.Local.sTemp)
+		V.Local.sData.Set(V.Local.sTemp)
+		'Set GSS_CUSTOMER to the SF Customer
+		F.Data.DataTable.SetValue("MSTR",V.Local.iC,"GSS_CUSTOMER",V.Local.sTemp)
+		'Customer Name (30)
+		V.Local.sTemp.Set(V.DataTable.MSTR(V.Local.iC).Name!FieldValTrim)
+		F.Intrinsic.String.RPad(V.Local.sTemp, " ", 30, V.Local.sTemp)
+		F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+		'add to sData new line
+		Function.Intrinsic.Control.If(V.Local.sDataAll, =, "")
+			F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Ambient.NewLine, V.Local.sDataAll)
+		Function.Intrinsic.Control.Else
+			F.Intrinsic.String.Build("{0}{1}{2}", V.Local.sDataAll,V.Local.sData, V.Ambient.NewLine, V.Local.sDataAll)
+		Function.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iC)
+
+F.Intrinsic.String.Build("{0}\CUSTOMER.TXT",V.Caller.FilesDir,V.Local.sFile)
+	F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bEx)
+	Function.Intrinsic.Control.If(V.Local.bEx,=,True)
+		F.Intrinsic.File.DeleteFile(V.Local.sFile)
+	Function.Intrinsic.Control.EndIf
+F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sDataAll)
+
+'run customer upload
+Function.Global.General.CallWrapperSync(6013, "1")
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: GCG_4508_Cust_To_GSS: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Ambient.ScriptPath, V.Ambient.Newline, V.Ambient.CurrentSubroutine, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+    F.Global.Messaging.queuemessage(V.Caller.CompanyCode,V.Global.iUserId.Trim,V.Caller.Caller,"Order Sync Program","onlineupdate@sweed.com","onlineupdate@sweed.com",V.Local.sError)	
+    Function.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.Create_File_Cust.End
+
+Program.Sub.CUST_XTRA.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+'this will update current customers and update new/existing customers with info not included in upload new
+
+V.Local..BulkDeclareString(ssql, sName, sTemp, sAdd1, sAdd2, sAdd3, sAdd4, sAdd5, sDate, sPhone)
+V.Local..BulkDeclareLong(iC)
+
+
+F.Data.DataTable.AddColumn("MSTR", "REC1", "STRING", "1")
+Function.Data.DataTable.SaveToDB("MSTR", "conG", "Customer_Master", "CUSTOMER*!*REC1", 256, "CUSTOMER@!@CUSTOMER*!*REC1@!@REC*!*Name2@!@NAME_CUSTOMER*!*SalesPerson@!@SALESPERSON*!*International__c2@!@INTL_ADDR*!*On_credit_hold__c2@!@FLAG_CREDIT_HOLD*!*CREDIT_CODE@!@CREDIT")
+F.Data.DataTable.AddColumn("MSTR", "REC6", "STRING", "6")	
+F.Data.DataTable.AddColumn("MSTR", "IVC", "STRING", "3")
+Function.Data.DataTable.SaveToDB("MSTR", "conG", "CUST_FORM_INFO", "CUSTOMER*!*REC6", 256, "CUSTOMER@!@CUSTOMER*!*REC6@!@REC*!*IVC@!@IVC_DELIVERY*!*X3rd_party_freight_customer__c@!@THRD_PRTY_FRT_CUST*!*Shipment_Carrier__c2@!@CARRIER_CD*!*on_shipping_hold__c2@!@SHP_HLD")
+F.Data.DataTable.AddColumn("MSTR", "REC2", "STRING", "2")
+Function.Data.DataTable.SaveToDB("MSTR", "conG", "CUSTOMER_SALES", "CUSTOMER*!*REC2", 256, "CUSTOMER@!@CUSTOMER*!*REC2@!@REC*!*Email@!@EMAIL*!*Sic@!@CODE_SIC*!*TERMS2@!@PAYMENT_TERMS")
+Function.Data.DataTable.SaveToDB("MSTR", "conG", "CUST_WEB_ADDR", "CUSTOMER", 256, "CUSTOMER@!@CUST_ID*!*Website@!@CUST_ADDR")		
+F.Data.DataTable.AddColumn("MSTR", "REC3", "STRING", "3")
+Function.Data.DataTable.SaveToDB("MSTR", "conG", "CUSTOMER_SHIPTO", "CUSTOMER*!*REC3", 256, "CUSTOMER@!@CUSTOMER*!*REC3@!@REC*!*Name2@!@NAME_CUSTOMER_SHIP")	
+'if new save ambient date
+V.Local.sDate.Set(V.Ambient.Date)
+F.Intrinsic.String.Format(V.Local.sDate, "YYMMDD", V.Local.sDate)
+F.Intrinsic.String.Build("Update CUSTOMER_SALES Set  Date_New_Customer  = '{0}' Where Date_New_Customer = '000000' And REC = '2'", V.Local.sDate, V.Local.ssql)
+F.ODBC.Connection!conG.Execute(V.Local.ssql)
+
+F.Intrinsic.Control.For(V.Local.iC, 0, V.DataTable.MSTR.RowCount--, 1)
+	'PHONE
+	V.Local.sPhone.Set(V.DataTable.MSTR(V.Local.iC).Phone!FieldValTrim)
+	F.Intrinsic.String.Replace(V.Local.sPhone, "(", "", V.Local.sPhone)
+	F.Intrinsic.String.Replace(V.Local.sPhone, ")", "", V.Local.sPhone)
+	F.Intrinsic.String.Replace(V.Local.sPhone, "-", "", V.Local.sPhone)
+	F.Intrinsic.String.Replace(V.Local.sPhone, " ", "", V.Local.sPhone)
+	F.Intrinsic.Control.If(V.DataTable.MSTR(V.Local.iC).International__c!FieldVal, =, False)
+		F.Intrinsic.String.Build("   {0}", V.Local.sPhone, V.Local.sPhone)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{0}", V.Local.sPhone, V.Local.sPhone)
+	F.Intrinsic.Control.EndIf
+	'Billing Address
+	V.Local.sTemp.Set(V.DataTable.MSTR(V.Local.iC).BillingStreet!FieldValTrim)
+	F.Intrinsic.String.Replace(V.Local.sTemp, V.ASCII.13, "" ,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, V.ASCII.10, V.Ambient.NewLine ,V.Local.sTemp)
+	F.Intrinsic.String.Split(V.Local.sTemp, V.Ambient.NewLine, V.Local.sTemp)
+	V.Local.sTemp.RedimPreserve(0,4)
+	V.Local.sAdd1.Set(V.Local.sTemp(0))
+	V.Local.sAdd2.Set(V.Local.sTemp(1))
+	V.Local.sAdd3.Set(V.Local.sTemp(2))
+	V.Local.sAdd4.Set(V.Local.sTemp(3))
+	V.Local.sAdd5.Set(V.Local.sTemp(4))
+	F.Intrinsic.String.Build("Update Customer_Master Set   ADDRESS1 = '{0}', ADDRESS2= '{1}', CITY = '{2}', STATE = '{3}', ZIP = '{4}', COUNTRY = '{5}', Telephone = '{6}'   Where CUSTOMER = '{7}' And REC = '1' ",  V.Local.sAdd1.PSQLFriendly, V.Local.sAdd2.PSQLFriendly, V.DataTable.MSTR(V.Local.iC).BillingCITY!FieldValStringPSQLFriendly, V.DataTable.MSTR(V.Local.iC).BillingSTATE!FieldValStringPSQLFriendly,  V.DataTable.MSTR(V.Local.iC).BillingPostalCode!FieldValStringPSQLFriendly,  V.DataTable.MSTR(V.Local.iC).BillingCOUNTRY!FieldValStringPSQLFriendly,  V.Local.sPhone,V.DataTable.MSTR(V.Local.iC).GSS_CUSTOMER!FieldValStringPSQLFriendly, V.Local.ssql)                                    
+	F.ODBC.Connection!conG.Execute(V.Local.ssql)
+	F.Intrinsic.String.Build("UPDATE CUSTOMER_INTL Set ADDRESS3 = '{0}', ADDRESS4 = '{1}', ADDRESS5 = '{2}' Where CUSTOMER = '{3}' And REC = '4' ", V.Local.sAdd3.PSQLFriendly, V.Local.sAdd4.PSQLFriendly, V.Local.sAdd5.PSQLFriendly, V.DataTable.MSTR(V.Local.iC).Customer!FieldValStringPSQLFriendly,V.Local.ssql)
+	F.ODBC.Connection!conG.Execute(V.Local.ssql)
+	'FAX
+	V.Local.sPhone.Set(V.DataTable.MSTR(V.Local.iC).FAX!FieldValTrim)
+	F.Intrinsic.String.Replace(V.Local.sPhone, "(", "", V.Local.sPhone)
+	F.Intrinsic.String.Replace(V.Local.sPhone, ")", "", V.Local.sPhone)
+	F.Intrinsic.String.Replace(V.Local.sPhone, "-", "", V.Local.sPhone)
+	F.Intrinsic.String.Replace(V.Local.sPhone, " ", "", V.Local.sPhone)
+	F.Intrinsic.Control.If(V.DataTable.MSTR(V.Local.iC).International__c!FieldVal, =, False)
+		F.Intrinsic.String.Build("   {0}", V.Local.sPhone, V.Local.sPhone)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{0}", V.Local.sPhone, V.Local.sPhone)
+	F.Intrinsic.Control.EndIf
+	'Shipping Address 
+	V.Local.sTemp.Set(V.DataTable.MSTR(V.Local.iC).ShippingStreet!FieldValTrim)
+	F.Intrinsic.String.Replace(V.Local.sTemp, V.ASCII.13, "" ,V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, V.ASCII.10, V.Ambient.NewLine ,V.Local.sTemp)
+	F.Intrinsic.String.Split(V.Local.sTemp, V.Ambient.NewLine, V.Local.sTemp)
+	V.Local.sTemp.RedimPreserve(0,4)
+	V.Local.sAdd1.Set(V.Local.sTemp(0))
+	V.Local.sAdd2.Set(V.Local.sTemp(1))
+	V.Local.sAdd3.Set(V.Local.sTemp(2))
+	V.Local.sAdd4.Set(V.Local.sTemp(3))
+	V.Local.sAdd5.Set(V.Local.sTemp(4))
+	F.Intrinsic.String.Build("Update CUSTOMER_SALES Set  FAX_NUMBER = '{0}'   Where CUSTOMER = '{1}' And REC = '2' ",V.Local.sPhone, V.DataTable.MSTR(V.Local.iC).GSS_CUSTOMER!FieldValTrim, V.Local.ssql)                                    
+	F.ODBC.Connection!conG.Execute(V.Local.ssql)
+	F.Intrinsic.String.Build("Update CUSTOMER_SHIPTO Set  ADDRESS1_SHIP = '{0}', ADDRESS2_SHIP= '{1}', CITY_SHIP = '{2}', STATE_SHIP = '{3}', CODE_ZIP_SHIP = '{4}', COUNTRY_SHIP = '{5}'   Where CUSTOMER = '{6}' And REC = '3' ",  V.Local.sAdd1.PSQLFriendly,  V.Local.sAdd2.PSQLFriendly, V.DataTable.MSTR(V.Local.iC).ShippingCity!FieldValStringPSQLFriendly, V.DataTable.MSTR(V.Local.iC).ShippingState!FieldValStringPSQLFriendly, V.DataTable.MSTR(V.Local.iC).ShippingPostalCode!FieldValStringPSQLFriendly,  V.DataTable.MSTR(V.Local.iC).ShippingCountry!FieldValStringPSQLFriendly,  V.DataTable.MSTR(V.Local.iC).GSS_CUSTOMER!FieldValStringPSQLFriendly, V.Local.ssql)                                    
+	F.ODBC.Connection!conG.Execute(V.Local.ssql)
+	F.Intrinsic.String.Build("UPDATE CUSTOMER_INTL Set ADDRESS3_SHIP = '{0}', ADDRESS4_SHIP = '{1}',ADDRESS5_SHIP = '{2}' Where CUSTOMER = '{3}' And REC = '4' ", V.Local.sAdd3.PSQLFriendly, V.Local.sAdd4.PSQLFriendly, V.Local.sAdd5.PSQLFriendly, V.DataTable.MSTR(V.Local.iC).Customer!FieldValStringPSQLFriendly,V.Local.ssql)
+	F.ODBC.Connection!conG.Execute(V.Local.ssql)
+F.Intrinsic.Control.Next(V.Local.iC)
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: GCG_4508_Cust_To_GSS: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Ambient.ScriptPath, V.Ambient.Newline, V.Ambient.CurrentSubroutine, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+    F.Global.Messaging.queuemessage(V.Caller.CompanyCode,V.Global.iUserId.Trim,V.Caller.Caller,"Order Sync Program","onlineupdate@sweed.com","onlineupdate@sweed.com",V.Local.sError)	
+    Function.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.CUST_XTRA.End
+
+Program.Sub.ADDL_SHIP.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+V.Local.iC.Declare(Long)
+V.Local.bEx.Declare(Boolean)
+V.Local..BulkDeclareString(sTemp, sData, sDataAll, sFile, ssql, sUpdates, sPhone, sFax, sSHIP_SEQ)
+V.Local.fDiscount.Declare(Float)
+
+'dataTable SHIPADDL, this is for additional ship to info- in sales force 
+F.ODBC.Connection!conG.ExecuteAndReturn("Select LAST_DATE From GCG_4508_Contact Where LAST_CONTACT = '2'", V.Global.sLastDate)
+'UPDATE TIME FOR LAST UPLOAD
+F.ODBC.Connection!conG.Execute("Delete From GCG_4508_Contact Where LAST_CONTACT = '2'")
+F.Intrinsic.String.Build("Insert Into GCG_4508_Contact (LAST_CONTACT, LAST_DATE) Values ('2', '{0}')", V.Ambient.Now, V.Local.ssql)
+F.ODBC.Connection!conG.Execute(V.Local.ssql)
+'somehow addl ship to are failing to upload- we are going to upload all every time- this does not take long	
+V.Global.sLastDate.Set("")
+
+Function.Intrinsic.Control.If(V.Global.sLastDate, =, "")
+	'first time...select all for query
+	V.Local.ssql.set("Select  ID as I, Account__c as ID , '' as Customer, GS_ADDRESS_ID__c as Name,International__c, LastModifiedDate, Company_Name__c,Address_1__c ,Address_2__c as  Address_2__c, City__C, State__C , Zip_Code__C, Country__c, attention__c, Phone__c,  fax__c, discount__c,  primary_shipping__C, Address_3__c, Address_4__c, Address_5__c, '' As SEQ_GSS  From Addresses__c Where GS_ADDRESS_ID__c <> '' And Account__c <> '' Order By GS_ADDRESS_ID__c ")
+Function.Intrinsic.Control.Else
+	'use the last date to build query
+	F.Intrinsic.String.Build("Select  Account__c as ID , '' as Customer, GS_ADDRESS_ID__c as Name,International__c,LastModifiedDate, Company_Name__c,Address_1__c, Address_2__c as Address_2__c, City__C, State__C , Zip_Code__C, Country__c, attention__c, Phone__c,  fax__c, discount__c,  primary_shipping__C, Address_3__c, Address_4__c, Address_5__c,  '' As SEQ_GSS  From Addresses__c Where  LastModifiedDate > '{0}'  And GS_ADDRESS_ID__c <> ''  And Account__c <> '' ", V.Global.sLastDate, V.Local.ssql)
+Function.Intrinsic.Control.EndIf
+
+'additional shipping
+Function.Automation.SalesForce.SelectToDataTable("SHIPADDL", True, V.Local.ssql)
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+
+'check if we need to update
+F.Intrinsic.Control.If(V.DataTable.SHIPADDL.RowCount, =, 0)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+'get customer
+Function.Automation.SalesForce.SelectToDataTable("TEMP",True, "Select DISTINCT ID , GS_Customer_ID__c as Customer From Account Where GS_Customer_ID__c <> ''")
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+F.Data.Dictionary.CreateFromDataTable("dict", "TEMP", "ID", "Customer",1,True)
+F.Data.Dictionary.SetDefaultReturn("dict", "")
+F.Data.DataTable.FillFromDictionary("SHIPADDL", "dict", "ID", "Customer")
+F.Data.Dictionary.Close("dict")
+F.Data.DataTable.Close("TEMP")
+
+'add from dictionary ship seq that already exist in GSS- these will need to be updated
+F.Data.Dictionary.CreateFromSQL("dict", "conG", "Select Right(SHIP_SEQ, 6) As  Name, Right(SHIP_SEQ, 6) As SEQ_GSS From OE_MULTI_SHIP ")
+F.Data.Dictionary.SetDefaultReturn("dict", "")
+F.Data.DataTable.FillFromDictionary("SHIPADDL", "dict", " Name", "SEQ_GSS")
+F.Data.Dictionary.Close("dict")
+
+'create the view for updates- this call wrapper does not update
+F.Data.Dataview.Create("SHIPADDL", "SHIPADDL_V")
+F.Data.DataView.SetFilter("SHIPADDL", "SHIPADDL_V","[SEQ_GSS] = [Name] ")
+
+F.Intrinsic.Control.For(V.Local.iC, 0, V.DataTable.SHIPADDL.RowCount--, 1)
+	'customer
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Customer!FieldValTrim)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 6, V.Local.sTemp)
+	V.Local.sData.Set(V.Local.sTemp)
+	'NAME aka Sequence
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Name!FieldValTrim)
+	F.Intrinsic.String.LPad(V.Local.sTemp, "0", 6, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'ship name
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Company_Name__c!FieldValStringPSQLFriendly)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 30, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'address 1
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Address_1__c!FieldValStringPSQLFriendly)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 30, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'address 2
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Address_2__c!FieldValStringPSQLFriendly)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 30, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'address 3
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Address_3__c!FieldValStringPSQLFriendly)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 30, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'address 4
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Address_4__c!FieldValStringPSQLFriendly)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 30, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'address 5
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Address_5__c!FieldValStringPSQLFriendly)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 30, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'city
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).City__C!FieldValStringPSQLFriendly)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 15, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'state
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).State__C!FieldValStringPSQLFriendly)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 2, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'zip
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Zip_Code__C!FieldValTrim)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 13, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'country
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Country__c!FieldValTrim)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 12, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'attention
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).attention__c!FieldValStringPSQLFriendly)
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 30, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'international flag
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).International__c!FieldVal)
+	F.Intrinsic.Control.If(V.Local.sTemp, =, False)
+		V.Local.sTemp.Set("N")
+	F.Intrinsic.Control.Else
+		V.Local.sTemp.Set("Y")
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'phone
+	F.Intrinsic.String.RPad(V.Local.sData, " ", 385, V.Local.sData)
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).Phone__c!FieldValTrim)
+	F.Intrinsic.String.Replace(V.Local.sTemp, "(", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, ")", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, "-", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, " ", "", V.Local.sTemp)
+	F.Intrinsic.Control.If(V.DataTable.SHIPADDL(V.Local.iC).International__c!FieldVal, =, False)
+		F.Intrinsic.String.Build("   {0}", V.Local.sTemp, V.Local.sTemp)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{0}", V.Local.sTemp, V.Local.sTemp)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 13, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'fax
+	F.Intrinsic.String.RPad(V.Local.sData, " ", 398, V.Local.sData)
+	V.Local.sTemp.Set(V.DataTable.SHIPADDL(V.Local.iC).fax__c!FieldValTrim)
+	F.Intrinsic.String.Replace(V.Local.sTemp, "(", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, ")", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, "-", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, " ", "", V.Local.sTemp)
+	F.Intrinsic.Control.If(V.DataTable.SHIPADDL(V.Local.iC).International__c!FieldVal, =, False)
+		F.Intrinsic.String.Build("   {0}", V.Local.sTemp, V.Local.sTemp)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{0}", V.Local.sTemp, V.Local.sTemp)
+	F.Intrinsic.Control.EndIf
+	F.Intrinsic.String.RPad(V.Local.sTemp, " ", 13, V.Local.sTemp)
+	F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Local.sTemp, V.Local.sData)
+	'add to sData new line
+	Function.Intrinsic.Control.If(V.Local.sDataAll, =, "")
+		F.Intrinsic.String.Build("{0}{1}", V.Local.sData, V.Ambient.NewLine, V.Local.sDataAll)
+	Function.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{0}{1}{2}", V.Local.sDataAll,V.Local.sData, V.Ambient.NewLine, V.Local.sDataAll)
+	Function.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iC)
+
+F.Intrinsic.String.Build("{0}\SHIPTOIN.TXT",V.Caller.FilesDir,V.Local.sFile)
+	F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bEx)
+	Function.Intrinsic.Control.If(V.Local.bEx,=,True)
+		F.Intrinsic.File.DeleteFile(V.Local.sFile)
+	Function.Intrinsic.Control.EndIf
+F.Intrinsic.File.String2File(V.Local.sFile,V.Local.sDataAll)
+F.Intrinsic.String.Build("{0}{1}", V.Caller.CompanyCode, "UPLSHPTO",V.Local.sTemp)
+Function.Global.General.CallWrapperSync(50, "UPLSHPTO/U")
+
+'update the changed lines 
+F.Intrinsic.Control.For(V.Local.iC, 0, V.DataView.SHIPADDL!SHIPADDL_V.RowCount--, 1)
+	'sets for updates
+	V.Local.sTemp.Set(V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Phone__c!FieldValTrim)
+	F.Intrinsic.String.Replace(V.Local.sTemp, "(", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, ")", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, "-", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, " ", "", V.Local.sTemp)
+	F.Intrinsic.Control.If(V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).International__c!FieldValTrim, =, False)
+		F.Intrinsic.String.Build("   {0}", V.Local.sTemp, V.Local.sPhone)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{0}", V.Local.sTemp, V.Local.sPhone)
+	F.Intrinsic.Control.EndIf
+	
+	V.Local.sTemp.Set(V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Fax__c!FieldValTrim)
+	F.Intrinsic.String.Replace(V.Local.sTemp, "(", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, ")", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, "-", "", V.Local.sTemp)
+	F.Intrinsic.String.Replace(V.Local.sTemp, " ", "", V.Local.sTemp)
+	F.Intrinsic.Control.If(V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).International__c!FieldValTrim, =, False)
+		F.Intrinsic.String.Build("   {0}", V.Local.sTemp, V.Local.sFax)
+	F.Intrinsic.Control.Else
+		F.Intrinsic.String.Build("{0}", V.Local.sTemp, V.Local.sFax)
+	F.Intrinsic.Control.EndIf
+	
+	V.Local.sSHIP_SEQ.Set(V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Name!FieldValTrim)
+	F.Intrinsic.String.LPad(V.Local.sSHIP_SEQ, "0 ", 6, V.Local.sSHIP_SEQ)
+	V.Local.fDiscount.Set( V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).discount__c!FieldValStringPSQLFriendly)
+	Function.Intrinsic.Control.If(V.Local.fDiscount, <>, 0)
+		F.Intrinsic.Math.Div(V.Local.fDiscount, 100, V.Local.fDiscount)
+	Function.Intrinsic.Control.EndIf
+	F.Intrinsic.String.Build("Customer_Name = '{0}', Ship_Address1 = '{1}', Ship_Address2 = '{2}',  Ship_Address3 = '{3}', Ship_Address4= '{4}', Ship_Address5 = '{5}', Ship_City= '{6}', Ship_State = '{7}', Ship_ZIP = '{8}',Ship_Country = '{9}', Ship_Attention = '{10}', SHIP_TELEPHONE = '{11}', SHIP_FAX = '{12}', SHIP_DISCOUNT = '{13}'",  V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Company_Name__c!FieldValStringPSQLFriendly,  V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Address_1__c!FieldValStringPSQLFriendly, V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Address_2__c!FieldValStringPSQLFriendly, V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Address_3__c!FieldValStringPSQLFriendly, V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Address_4__c!FieldValStringPSQLFriendly, V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Address_5__c!FieldValStringPSQLFriendly,V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).City__C!FieldValStringPSQLFriendly  , V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).State__C!FieldValTrim, V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Zip_Code__C!FieldValTrim, V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).Country__c!FieldValStringPSQLFriendly, V.DataView.SHIPADDL!SHIPADDL_V(V.Local.iC).attention__c!FieldValStringPSQLFriendly, V.Local.sPhone, V.Local.sFax, V.Local.fDiscount,V.Local.sUpdates)
+	F.Intrinsic.String.Build("Update OE_MULTI_SHIP Set {0} Where SHIP_SEQ = '{1}'", V.Local.sUpdates, V.Local.sSHIP_SEQ, V.Local.ssql)
+	F.ODBC.Connection!conG.Execute(V.Local.ssql)
+F.Intrinsic.Control.Next(V.Local.iC)
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: GCG_4508_Cust_To_GSS: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Ambient.ScriptPath, V.Ambient.Newline, V.Ambient.CurrentSubroutine, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+    F.Global.Messaging.queuemessage(V.Caller.CompanyCode,V.Global.iUserId.Trim,V.Caller.Caller,"Order Sync Program","onlineupdate@sweed.com","onlineupdate@sweed.com",V.Local.sError)	
+    Function.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.ADDL_SHIP.End
+
+Program.Sub.Get_Data_Contact.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+V.Local..BulkDeclareString(ssql, sValues, sRet, sSetOne, sTemp, sAdd1, sAdd2, sAdd3, sAdd4, sAdd5, sSAdd1, sSAdd2, sSAdd3, sSAdd4, sSAdd5, sID, sPhone1, sPhone2, sPhone3, sPhone4, sPRIM, sSHIP, sFirst, sLast, sMiddle, sPreferred_Name, sJobFnct, sTitle, sEmail, sEmail2, sCity, sCity2, sState, sState2)
+V.Local..BulkDeclareLong(iC, iAltID)
+
+'UPDATE TIME FOR LAST UPLOAD
+F.ODBC.Connection!conG.ExecuteAndReturn("Select LAST_DATE From GCG_4508_Contact Where LAST_CONTACT = '1'", V.Global.sLastDate)
+F.ODBC.Connection!conG.Execute("Delete From GCG_4508_Contact Where LAST_CONTACT = '1'")
+F.Intrinsic.String.Build("Insert Into GCG_4508_Contact (LAST_CONTACT, LAST_DATE) Values ('1', '{0}')", V.Ambient.Now, V.Local.ssql)
+F.ODBC.Connection!conG.Execute(V.Local.ssql)
+''V.Global.sLastDate.Set("")
+Function.Intrinsic.Control.If(V.Global.sLastDate, =, "")
+	'first time...select all for query
+	V.Local.ssql.set("Select Id As SF_ID, '' as Cust, Salutation, MailingStreet, MailingCity, MailingState, MailingPostalCode,MailingCountry, OtherStreet, OtherCity, OtherState, OtherPostalCode, OtherCountry,Job_Function__c,Email, Additional_Email__c, Active__c ,AccountId,'C' as Type,  LastModifiedDate, '' As Last_Contact, Sequence__c As ID, FirstName, MiddleName, LastName, Preferred_Name__c, Suffix, Phone_Code__c, Phone_2_Code__c, Phone_3_Code__c, Phone_4_Code__c, Phone, Phone_2__c, Phone_3__c, Phone_4__c, Ext__c, Ext_2__c, Ext_3__c, Ext_4__c, Title, Job_Function__c, Active__c, OtherStreet, Primary_Contact__c From Contact Where AccountID <> '' ") 
+Function.Intrinsic.Control.Else
+	'use the last date to build query
+	F.Intrinsic.String.Build("Select Id As SF_ID, '' as Cust, Salutation, MailingStreet, MailingCity, MailingState, MailingPostalCode,MailingCountry,OtherStreet, OtherCity, OtherState, OtherPostalCode, OtherCountry, Job_Function__c, Email, Additional_Email__c, Active__c ,AccountId,'C' as Type,  LastModifiedDate, '' As Last_Contact, Sequence__c As ID,  FirstName, MiddleName, LastName, Preferred_Name__c, Suffix, Phone_Code__c, Phone_2_Code__c, Phone_3_Code__c, Phone_4_Code__c, Phone, Phone_2__c, Phone_3__c, Phone_4__c, Ext__c, Ext_2__c, Ext_3__c, Ext_4__c, Title, Job_Function__c, Active__c, OtherStreet, Primary_Contact__c From Contact Where AccountID <> '' And LastModifiedDate > '{0}'", V.Global.sLastDate, V.Local.ssql) 
+Function.Intrinsic.Control.EndIf
+
+'create table
+Function.Automation.SalesForce.SelectToDataTable("SF", TRUE,V.Local.ssql)
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+'check if we need to update
+F.Intrinsic.Control.If(V.DataTable.SF.RowCount, =, 0)
+	F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.EndIf
+
+'get the gss customer number
+Function.Automation.SalesForce.SelectToDataTable("Acct", True, "Select ID as AccountId, GS_Customer_ID__c as Cust From Account")
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+F.Data.Dictionary.CreateFromDatatable("dict", "Acct",  "AccountId", "Cust",1,True)
+F.Data.Dictionary.SetDefaultReturn("dict", "")
+F.Data.DataTable.FillFromDictionary("SF", "dict", "AccountId", "Cust")
+F.Data.Dictionary.Close("dict")
+
+'convert to bit the active value
+F.Data.DataTable.AddExpressionColumn("SF", "ACTIVE","STRING" ,"IIF(Active__c = 'true', '1', '0')")
+'convert to bit the primary_contact__c value
+F.Data.DataTable.AddExpressionColumn("SF", "PC","STRING" ,"IIF(Primary_Contact__c = 'true', '1', '0')")
+'convert First and Last Name to Name
+F.Data.DataTable.AddExpressionColumn("SF", "NAME","STRING" ,"[FirstName]+' '+' '+ [LastName]")
+
+'MailingStreet, MailingCity, MailingState, MailingPostalCode,MailingCountry, sTemp, sAdd1, sAdd2
+
+'2 if statements for new and update in loop of SF
+F.Intrinsic.Control.For(V.Local.iC, 0,V.DataTable.SF.RowCount--, 1)
+	V.Local.sAdd1.Set("")
+	V.Local.sAdd2.Set("")
+	V.Local.sAdd3.Set("")
+	V.Local.sAdd4.Set("")
+	V.Local.sAdd5.Set("")
+	V.Local.sSAdd1.Set("")
+	V.Local.sSAdd2.Set("")
+	V.Local.sSAdd3.Set("")
+	V.Local.sSAdd4.Set("")
+	V.Local.sSAdd5.Set("")
+	'since it got changed: 
+	Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).ID!FieldValTrim, <>, "")
+		'split out addres
+		V.Local.sTemp.Set(V.DataTable.SF(V.Local.iC).MailingStreet!FieldValTrim)
+			F.Intrinsic.String.Replace(V.Local.sTemp, V.ASCII.13, "" ,V.Local.sTemp)
+			F.Intrinsic.String.Replace(V.Local.sTemp, V.ASCII.10, V.Ambient.NewLine ,V.Local.sTemp)
+			F.Intrinsic.String.Split(V.Local.sTemp, V.Ambient.NewLine, V.Local.sTemp)
+			
+			Function.Intrinsic.Control.If(V.Local.sTemp.UBound, >, 3)
+				V.Local.sAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sAdd1, 50, V.Local.sAdd1)
+				V.Local.sAdd2.Set(V.Local.sTemp(1))
+				F.Intrinsic.String.Left(V.Local.sAdd2, 50, V.Local.sAdd2)
+				V.Local.sAdd3.Set(V.Local.sTemp(2))
+				F.Intrinsic.String.Left(V.Local.sAdd3, 50, V.Local.sAdd3)
+				V.Local.sAdd4.Set(V.Local.sTemp(3))
+				F.Intrinsic.String.Left(V.Local.sAdd4, 50, V.Local.sAdd4)
+				V.Local.sAdd5.Set(V.Local.sTemp(4))
+				F.Intrinsic.String.Left(V.Local.sAdd5, 50, V.Local.sAdd5)
+			Function.Intrinsic.Control.ElseIf(V.Local.sTemp.UBound, =, 3)
+				V.Local.sAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sAdd1, 50, V.Local.sAdd1)
+				V.Local.sAdd2.Set(V.Local.sTemp(1))
+				F.Intrinsic.String.Left(V.Local.sAdd2, 50, V.Local.sAdd2)
+				V.Local.sAdd3.Set(V.Local.sTemp(2))
+				F.Intrinsic.String.Left(V.Local.sAdd3, 50, V.Local.sAdd3)
+				V.Local.sAdd4.Set(V.Local.sTemp(3))
+				F.Intrinsic.String.Left(V.Local.sAdd4, 50, V.Local.sAdd4)
+				V.Local.sAdd5.Set("")
+			Function.Intrinsic.Control.ElseIf(V.Local.sTemp.UBound, =, 2)
+				V.Local.sAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sAdd1, 50, V.Local.sAdd1)
+				V.Local.sAdd2.Set(V.Local.sTemp(1))
+				F.Intrinsic.String.Left(V.Local.sAdd2, 50, V.Local.sAdd2)
+				V.Local.sAdd3.Set(V.Local.sTemp(2))
+				F.Intrinsic.String.Left(V.Local.sAdd3, 50, V.Local.sAdd3)
+				V.Local.sAdd4.Set("")
+				V.Local.sAdd5.Set("")
+			Function.Intrinsic.Control.ElseIf(V.Local.sTemp.UBound, =, 1)
+				V.Local.sAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sAdd1, 50, V.Local.sAdd1)
+				V.Local.sAdd2.Set(V.Local.sTemp(1))
+				F.Intrinsic.String.Left(V.Local.sAdd2, 50, V.Local.sAdd2)
+				V.Local.sAdd3.Set("")
+				V.Local.sAdd4.Set("")
+				V.Local.sAdd5.Set("")
+				Function.Intrinsic.Control.ElseIf(V.Local.sTemp.UBound, =, 0)
+				V.Local.sAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sAdd1, 50, V.Local.sAdd1)
+				V.Local.sAdd2.Set("")
+				V.Local.sAdd3.Set("")
+				V.Local.sAdd4.Set("")
+				V.Local.sAdd5.Set("")
+			Function.Intrinsic.Control.EndIf
+		
+		V.Local.sTemp.Set(V.DataTable.SF(V.Local.iC).OtherStreet!FieldValTrim)
+			F.Intrinsic.String.Replace(V.Local.sTemp, V.ASCII.13, "" ,V.Local.sTemp)
+			F.Intrinsic.String.Replace(V.Local.sTemp, V.ASCII.10, V.Ambient.NewLine ,V.Local.sTemp)
+			F.Intrinsic.String.Split(V.Local.sTemp, V.Ambient.NewLine, V.Local.sTemp)
+			Function.Intrinsic.Control.If(V.Local.sTemp.UBound, >, 3)
+				V.Local.sSAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sSAdd1, 50, V.Local.sSAdd1)
+				V.Local.sSAdd2.Set(V.Local.sTemp(1))
+				F.Intrinsic.String.Left(V.Local.sSAdd2, 50, V.Local.sSAdd2)
+				V.Local.sSAdd3.Set(V.Local.sTemp(2))
+				F.Intrinsic.String.Left(V.Local.sSAdd3, 50, V.Local.sSAdd3)
+				V.Local.sSAdd4.Set(V.Local.sTemp(3))
+				F.Intrinsic.String.Left(V.Local.sSAdd4, 50, V.Local.sSAdd4)
+				V.Local.sSAdd5.Set(V.Local.sTemp(4))
+				F.Intrinsic.String.Left(V.Local.sSAdd5, 50, V.Local.sSAdd5)
+			Function.Intrinsic.Control.ElseIf(V.Local.sTemp.UBound, =, 3)
+				V.Local.sSAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sSAdd1, 50, V.Local.sSAdd1)
+				V.Local.sSAdd2.Set(V.Local.sTemp(1))
+				F.Intrinsic.String.Left(V.Local.sSAdd2, 50, V.Local.sSAdd2)
+				V.Local.sSAdd3.Set(V.Local.sTemp(2))
+				F.Intrinsic.String.Left(V.Local.sSAdd3, 50, V.Local.sSAdd3)
+				V.Local.sSAdd4.Set(V.Local.sTemp(3))
+				F.Intrinsic.String.Left(V.Local.sSAdd4, 50, V.Local.sSAdd4)
+				V.Local.sSAdd5.Set("")
+			Function.Intrinsic.Control.ElseIf(V.Local.sTemp.UBound, =, 2)
+				V.Local.sSAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sSAdd1, 50, V.Local.sSAdd1)
+				V.Local.sSAdd2.Set(V.Local.sTemp(1))
+				F.Intrinsic.String.Left(V.Local.sSAdd2, 50, V.Local.sSAdd2)
+				V.Local.sSAdd3.Set(V.Local.sTemp(2))
+				F.Intrinsic.String.Left(V.Local.sSAdd3, 50, V.Local.sSAdd3)
+				V.Local.sSAdd4.Set("")
+				V.Local.sSAdd5.Set("")
+			Function.Intrinsic.Control.ElseIf(V.Local.sTemp.UBound, =, 1)
+				V.Local.sSAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sSAdd1, 50, V.Local.sSAdd1)
+				V.Local.sSAdd2.Set(V.Local.sTemp(1))
+				F.Intrinsic.String.Left(V.Local.sSAdd2, 50, V.Local.sSAdd2)
+				V.Local.sSAdd3.Set("")
+				V.Local.sSAdd4.Set("")
+				V.Local.sSAdd5.Set("")
+				Function.Intrinsic.Control.ElseIf(V.Local.sTemp.UBound, =, 0)
+				V.Local.sSAdd1.Set(V.Local.sTemp(0))
+				F.Intrinsic.String.Left(V.Local.sSAdd1, 50, V.Local.sSAdd1)
+				V.Local.sSAdd2.Set("")
+				V.Local.sSAdd3.Set("")
+				V.Local.sSAdd4.Set("")
+				V.Local.sSAdd5.Set("")
+			Function.Intrinsic.Control.EndIf
+
+		V.Local.sPhone1.Set(V.DataTable.SF(V.Local.iC).Phone_Code__c!FieldValTrim)
+		Function.Intrinsic.Control.If(V.Local.sPhone1, =, "")
+			V.Local.sPhone1.Set("5")
+		Function.Intrinsic.Control.EndIf
+		
+		V.Local.sPhone2.Set(V.DataTable.SF(V.Local.iC).Phone_2_Code__c!FieldValTrim)
+		Function.Intrinsic.Control.If(V.Local.sPhone2, =, "")
+			V.Local.sPhone2.Set("5")
+		Function.Intrinsic.Control.EndIf
+		
+		V.Local.sPhone3.Set(V.DataTable.SF(V.Local.iC).Phone_3_Code__c!FieldValTrim)
+		Function.Intrinsic.Control.If(V.Local.sPhone3, =, "")
+			V.Local.sPhone3.Set("5")
+		Function.Intrinsic.Control.EndIf
+		
+		V.Local.sPhone4.Set(V.DataTable.SF(V.Local.iC).Phone_4_Code__c!FieldValTrim)
+		Function.Intrinsic.Control.If(V.Local.sPhone4, =, "")
+			V.Local.sPhone4.Set("5")
+		Function.Intrinsic.Control.EndIf
+
+		'lock down length of strings
+		F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).FirstName!FIELDVALTRIM, 25, V.Local.sFirst.PSQLFriendly)
+		F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).LastName!FIELDVALTRIM, 25, V.Local.sLast.PSQLFriendly)
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).MiddleName!FIELDVALTRIM, <>, "")
+			F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).MiddleName!FIELDVALTRIM, 1, V.Local.sMiddle)
+		Function.Intrinsic.Control.Else
+			 V.Local.sMiddle.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).Preferred_Name__c!FIELDVALTRIM, <>, "")
+			F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).Preferred_Name__c!FIELDVALTRIM, 30, V.Local.sPreferred_Name)
+		Function.Intrinsic.Control.Else
+			V.Local.sPreferred_Name.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).JOB_FUNCTION__C!FieldValTrim, <>, "")
+			F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).JOB_FUNCTION__C!FieldValTrim, 50, V.Local.sJobFnct)
+		Function.Intrinsic.Control.Else
+			V.Local.sJobFnct.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).Title!FieldValTrim, <>, "")
+			F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).Title!FieldValTrim, 50,  V.Local.sTitle)
+		Function.Intrinsic.Control.Else
+			 V.Local.sTitle.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).Email!FieldValTrim, <>, "")
+			F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).Email!FieldValTrim, 100,  V.Local.sEmail)
+		Function.Intrinsic.Control.Else
+			V.Local.sEmail.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).Additional_Email__c!FieldValTrim, <>, "")
+			F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).Additional_Email__c!FieldValTrim, 100,  V.Local.sEmail2)
+		Function.Intrinsic.Control.Else
+			V.Local.sEmail2.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).MailingCity!FieldValTrim, <>, "")
+			F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).MailingCity!FieldValTrim, 15,  V.Local.sCity)
+		Function.Intrinsic.Control.Else
+			V.Local.sCity.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).OtherCity!FieldValTrim, <>, "")
+			F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).OtherCity!FieldValTrim, 15,  V.Local.sCity2)
+		Function.Intrinsic.Control.Else
+			V.Local.sCity2.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).MailingState!FieldValTrim, <>, "")
+			F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).MailingState!FieldValTrim, 10,  V.Local.sState)
+		Function.Intrinsic.Control.Else
+			V.Local.sState.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		Function.Intrinsic.Control.If(V.DataTable.SF(V.Local.iC).OtherState!FieldValTrim, <>, "")
+		F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).OtherState!FieldValTrim, 10,  V.Local.sState2)
+		Function.Intrinsic.Control.Else
+			V.Local.sState2.Set("")
+		Function.Intrinsic.Control.EndIf
+		
+		'check if this is new or update
+		F.Intrinsic.String.LPad(V.DataTable.SF(V.Local.iC).ID!FieldValTrim, "0", 9, V.Local.sID)
+		F.Intrinsic.String.Build("Select Alt_ID From CONTACT Where CUST = '{0}' And TYPE = 'C' And ID = '{1}'", V.DataTable.SF(V.Local.iC).CUST!FieldValTrim, V.Local.sID, V.Local.ssql)
+		F.ODBC.Connection!conG.ExecuteAndReturn(V.Local.ssql, V.Local.sRet)
+		
+		Function.Intrinsic.Control.If(V.Local.sRet, =, "")
+			'then we have a new record and need to get the next alt_id 
+			F.ODBC.Connection!conG.ExecuteAndReturn("Select Top 1 Alt_ID From Contact Order By Alt_ID DESC" , V.Local.sRet)
+			F.Intrinsic.Math.Add(V.Local.sRet, 1, V.Local.iAltID)
+			'create the insert string
+			F.Intrinsic.String.Build("'{0}', '{1}','{2}','{3}','{4}','{5}','{6}','{7}','{8}','{9}','{10}','{11}','{12}','{13}','{14}','{15}','{16}','{17}','{18}','{19}','{20}','{21}', '{22}', '{23}', '{24}', '{25}', '{26}', '{27}', '{28}', '{29}', '{30}', '{31}', '{32}', '{33}', '{34}', '{35}', '{36}','{37}','{38}','{39}','{40}','{41}'",V.Local.iAltID,"0",V.DataTable.SF(V.Local.iC).Name!FIELDVALSTRINGPSQLFRIENDLY, V.Local.sID, V.DataTable.SF(V.Local.iC).Cust!FIELDVALSTRINGPSQLFRIENDLY, V.DataTable.SF(V.Local.iC).Type!FIELDVALSTRINGPSQLFRIENDLY, "00", V.DataTable.SF(V.Local.iC).Salutation!FIELDVALSTRINGPSQLFRIENDLY, V.Local.sFirst.PSQLFriendly, V.Local.sMiddle.PSQLFriendly, V.Local.sLast.PSQLFriendly, V.Local.sPreferred_Name.PSQLFriendly, V.DataTable.SF(V.Local.iC).Suffix!FIELDVALSTRINGPSQLFRIENDLY, V.Local.sPhone1, V.Local.sPhone2, V.Local.sPhone3, V.Local.sPhone4, V.DataTable.SF(V.Local.iC).Phone!FieldValTrim, V.DataTable.SF(V.Local.iC).Phone_2__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Phone_3__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Phone_4__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Ext__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Ext_2__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Ext_3__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Ext_4__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Active!FieldValTrim, V.DataTable.SF(V.Local.iC).PC!FieldValTrim,V.Local.sTitle.PSQLFriendly, V.Local.sJobFnct.PSQLFriendly, V.Local.sEmail.PSQLFriendly, V.Local.sEmail2.PSQLFriendly, V.Local.sAdd1.PSQLFriendly, V.Local.sAdd2.PSQLFriendly,V.Local.sCity.PSQLFriendly, V.Local.sState.PSQLFriendly, V.DataTable.SF(V.Local.iC).MailingPostalCode!FieldValTrim,"0",V.Local.sSAdd1.PSQLFriendly, V.Local.sSAdd2.PSQLFriendly,V.Local.sCity2.PSQLFriendly,V.Local.sState2.PSQLFriendly,V.DataTable.SF(V.Local.iC).OtherPostalCode!FieldValTrim,V.Local.sValues) 
+			F.Intrinsic.String.Build("Insert Into CONTACT (ALT_ID,AFFILIATION,NAME,ID,CUST, TYPE, SEQ, NAME_PREFIX,NAME_FIRST, NAME_MID_INT, NAME_LAST, NAME_PREFERRED, NAME_SUFFIX, Phone_T1, Phone_T2, Phone_T3, Phone_T4,PHONE1, PHONE2, PHONE3, PHONE4,EXT1,EXT2,EXT3,EXT4, Active, PRI_CNTCT,TITLE, JOB_FUNCTION, EMAIL1, EMAIL2,ADDRESS_1, ADDRESS_2, CITY, STATE,ZIP, PRI_ADDRESS, ADDRESS2_1, ADDRESS2_2, CITY2, State2, ZIP2) Values({0})", V.Local.sValues, V.Local.ssql)  
+			F.ODBC.Connection!conG.Execute(V.Local.ssql)						
+		Function.Intrinsic.Control.Else
+			'then we update the record; ALT_ID = V.local.sRet
+			V.Local.iAltID.Set(V.local.sRet)
+			'create the insert string	
+			F.Intrinsic.String.Build("NAME='{0}', NAME_PREFIX= '{1}',NAME_FIRST= '{2}',NAME_MID_INT= '{3}',NAME_LAST= '{4}',NAME_PREFERRED='{5}',NAME_SUFFIX='{6}',Phone_T1='{7}',Phone_T2='{8}',Phone_T3='{9}',Phone_T4='{10}',ADDRESS2_1='{11}', ADDRESS2_2='{12}', CITY2='{13}', State2='{14}', ZIP2='{15}' ", V.DataTable.SF(V.Local.iC).Name!FIELDVALSTRINGPSQLFRIENDLY, V.DataTable.SF(V.Local.iC).Salutation!FieldValTrim, V.Local.sFirst.PSQLFriendly, V.Local.sMiddle.PSQLFriendly, V.Local.sLast.PSQLFriendly,V.Local.sPreferred_Name.PSQLFriendly, V.DataTable.SF(V.Local.iC).Suffix!FIELDVALSTRINGPSQLFRIENDLY, V.Local.sPhone1, V.Local.sPhone2, V.Local.sPhone3, V.Local.sPhone4, V.Local.sSAdd1.PSQLFriendly, V.Local.sSAdd2.PSQLFriendly,V.Local.sCity2.PSQLFriendly,V.Local.sState2.PSQLFriendly,V.DataTable.SF(V.Local.iC).OtherPostalCode!FieldValTrim,V.Local.sSetOne)
+			F.Intrinsic.String.Build("Update CONTACT Set {0},PHONE1='{1}', PHONE2='{2}', PHONE3='{3}', PHONE4='{4}',EXT1='{5}',EXT2='{6}',EXT3='{7}',EXT4='{8}', ACTIVE = '{9}', PRI_CNTCT = '{10}', TITLE = '{11}', JOB_FUNCTION= '{12}', EMAIL1= '{13}', EMAIL2= '{14}', ADDRESS_1= '{15}', ADDRESS_2= '{16}', CITY= '{17}', STATE= '{18}', ZIP= '{19}' Where ALT_ID = '{20}'", V.Local.sSetOne, V.DataTable.SF(V.Local.iC).Phone!FieldValTrim, V.DataTable.SF(V.Local.iC).Phone_2__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Phone_3__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Phone_4__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Ext__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Ext_2__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Ext_3__c!FieldValTrim, V.DataTable.SF(V.Local.iC).Ext_4__c!FieldValTrim,  V.DataTable.SF(V.Local.iC).ACTIVE!FieldValTrim, V.DataTable.SF(V.Local.iC).PC!FieldValTrim, V.Local.sTitle.PSQLFriendly,V.Local.sJobFnct.PSQLFriendly,V.Local.sEmail.PSQLFriendly, V.Local.sEmail2.PSQLFriendly, V.Local.sAdd1.PSQLFriendly, V.Local.sAdd2.PSQLFriendly,V.Local.sCity.PSQLFriendly, V.Local.sState.PSQLFriendly, V.DataTable.SF(V.Local.iC).MailingPostalCode!FieldValTrim, V.Local.sRet, V.Local.ssql)
+			F.ODBC.Connection!conG.Execute(V.Local.ssql)		
+		Function.Intrinsic.Control.EndIf
+	
+		F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).MailingCountry!FieldValTrim, 12, V.Local.sPRIM)
+		F.Intrinsic.String.Left(V.DataTable.SF(V.Local.iC).OtherCountry!FieldValTrim, 12, V.Local.sSHIP)
+		'CID and PRIM_COUNTRY 
+		F.Intrinsic.String.Build("Delete From CRM_CONTACT_AUX Where CID = '{0}'", V.Local.iAltID, V.Local.ssql)
+		F.ODBC.Connection!conG.Execute(V.Local.ssql)
+		F.Intrinsic.String.Build("Insert Into CRM_CONTACT_AUX (CID, PRIM_SHIPTO_CONTACT,PRIM_COUNTRY,SHIPTO_COUNTRY, INTERCEPT) Values( '{0}', 0, '{1}','{2}' ,0)", V.Local.iAltID, V.Local.sPRIM, V.Local.sSHIP, V.Local.ssql)
+		F.ODBC.Connection!conG.Execute(V.Local.ssql)
+		
+		'addresses 3-5
+		'update record
+		F.Intrinsic.String.Build("Update CRM_CONTACT_AUX Set PRIM_ADDRESS3='{0}', PRIM_ADDRESS4='{1}',PRIM_ADDRESS5='{2}', SHIPTO_ADDRESS3='{3}',SHIPTO_ADDRESS4='{4}', SHIPTO_ADDRESS5='{5}'  Where CID = '{6}'",  V.Local.sAdd3.PSQLFriendly, V.Local.sAdd4.PSQLFriendly, V.Local.sAdd5.PSQLFriendly, V.Local.sSAdd3.PSQLFriendly, V.Local.sSAdd4.PSQLFriendly, V.Local.sSAdd5.PSQLFriendly,V.Local.iAltID.Long,V.Local.ssql)
+		F.ODBC.Connection!conG.Execute(V.Local.ssql)
+		
+	Function.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iC)
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: GCG_4508_Cust_To_GSS: {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Ambient.ScriptPath, V.Ambient.Newline, V.Ambient.CurrentSubroutine, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+    F.Global.Messaging.queuemessage(V.Caller.CompanyCode,V.Global.iUserId.Trim,V.Caller.Caller,"Order Sync Program","onlineupdate@sweed.com","onlineupdate@sweed.com",V.Local.sError)	
+    Function.Intrinsic.Control.CallSub(unload)
+F.Intrinsic.Control.EndTry
+Program.Sub.Get_Data_Contact.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.Try
+V.Local.sError.Declare
+
+V.Local.sFile.Declare(String)
+V.Local.bExists.Declare(Boolean)
+
+'Save the new value to the file
+F.Intrinsic.String.Build("{0}: {1} - End:{2}",V.Global.sFileContents,V.Global.iAPICount,V.Ambient.Now,V.Global.sFileContents)
+'Save the new value to the file
+F.Intrinsic.File.String2File(V.Global.sFilePath,V.Global.sFileContents)
+
+'path where file exists
+F.Intrinsic.String.Build("{0}\WEB_ORDERS\IS_RUNNING\Running_CUST_{1}.txt",V.Caller.FilesDir,"Y",V.Local.sFile)
+
+'delete file for the next run
+F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists,=,True)
+	Function.Intrinsic.File.DeleteFile(V.Local.sFile)
+Function.Intrinsic.Control.EndIf
+
+'close connection
+Function.ODBC.Connection!conG.Close
+F.Intrinsic.Control.End
+
+
+F.Intrinsic.Control.Catch
+    F.Intrinsic.String.Build("Project: GCG_4508_Cust_To_GSS:  {0}{1}{1}Subroutine: {2}{1}Error Occurred {3} with description {4}{1}{1}GAB Version: {5}", V.Ambient.ScriptPath, V.Ambient.Newline, V.Ambient.CurrentSubroutine, V.Ambient.ErrorNumber, V.Ambient.ErrorDescription, V.Ambient.GABVersion, V.Local.sError)
+    F.Global.Messaging.queuemessage(V.Caller.CompanyCode,V.Global.iUserId.Trim,V.Caller.Caller,"Order Sync Program","onlineupdate@sweed.com","onlineupdate@sweed.com",V.Local.sError)	
+    Function.Intrinsic.Control.End
+F.Intrinsic.Control.EndTry
+Program.Sub.Unload.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$$}$12:00:00 AM$}$False
+${$3$}$0$}$$}$0$}$-1$}$$}$12:00:00 AM$}$This project will upload sales order via the web importer
+Program.Sub.Comments.End
