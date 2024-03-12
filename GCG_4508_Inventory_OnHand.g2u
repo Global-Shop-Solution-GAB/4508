@@ -1,0 +1,290 @@
+Program.Sub.Preflight.Start
+V.Global.iAPICount.Declare(Long)
+V.Global.sFilePath.Declare(String)
+V.Global.sFileContents.Declare(String)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local..BulkDeclareString(sRet, sConString)
+V.Local.bExists.Declare(Boolean)
+V.Local.sDate.Declare(String)
+V.Local.iDay.Declare(Long)
+V.Local.iHour.Declare(Long)
+
+F.Intrinsic.Date.Weekday(V.Ambient.Now,V.Local.iDay)
+F.Intrinsic.Date.Hour(V.Ambient.Now,V.Local.iHour)
+
+F.Intrinsic.Control.If(V.Local.iDay,>,1,"AND",V.Local.iDay,<,7)
+	F.Intrinsic.Control.If(V.Local.iHour,>,5,"AND",V.Local.iHour,<,19)
+		'runs from on line update 38130
+		'there will be no message box in the error handling> runs from onlline update
+		' this program updates the qty onHand for inventory in salesForce
+		'GSS Connection
+		F.ODBC.Connection!conG.OpenConnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass) 
+		'check dirs first- the file to check isRunning must exist
+		Function.Intrinsic.Control.CallSub(check_dir)
+		'For Online update: Check if the program is running.
+		Function.Intrinsic.Control.CallSub(is_running)
+		'Sales Force Connection
+		F.ODBC.Connection!conG.ExecuteAndReturn("Select rTrim(USER_NAME), rTrim(PASS), rTrim(SECTOK) From GCG_4508_CONNECTION Where NUM = '1'", V.Local.sRet)
+		F.Intrinsic.String.Split(V.Local.sRet, "*!*", V.Local.sRet)
+		F.Intrinsic.String.Build("Offline=False;Password={1};Security Token={2};User={0};Use Sandbox=False",V.Local.sRet(0),V.Local.sRet(1),V.Local.sRet(2),v.Local.sConString) 
+		'Set Connection String 
+		F.Automation.SalesForce.SetConnectionString(V.Local.sConString)
+		
+		F.Intrinsic.String.Format(V.Ambient.Date,"MMDDYYYY",V.Local.sDate)
+		
+		'If the directories don't exist, go ahead and create them
+		F.Intrinsic.String.Build("{0}\API_COUNT",V.Caller.FilesDir,V.Global.sFilePath)
+		F.Intrinsic.File.DirExists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,=,False)
+			F.Intrinsic.File.CreateDir(V.Global.sFilePath)
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("{0}\INV_ONHAND",V.Global.sFilePath,V.Global.sFilePath)
+		F.Intrinsic.File.DirExists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,=,False)
+			F.Intrinsic.File.CreateDir(V.Global.sFilePath)
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("{0}\API_Count_{1}.txt",V.Global.sFilePath,V.Local.sDate,V.Global.sFilePath)
+		F.Intrinsic.File.Exists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,<>,False)
+			F.Intrinsic.File.File2String(V.Global.sFilePath,V.Global.sFileContents)
+			F.Intrinsic.String.Build("{0}{1}{2}",V.Global.sFileContents,V.Ambient.NewLine,V.Ambient.Now,V.Global.sFileContents)
+		F.Intrinsic.Control.Else
+			V.Global.sFileContents.Set(V.Ambient.Now)
+		F.Intrinsic.Control.EndIf
+		
+		V.Global.iAPICount.Set(0)
+		
+		'call sub to update onhand
+		Function.Intrinsic.Control.CallSub(update_onhand)
+		Function.Intrinsic.Control.CallSub(isactive)
+		Function.Intrinsic.Control.CallSub(unload)
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_OnHand.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Main.End
+
+Program.Sub.Check_Dir.Start
+F.Intrinsic.Control.SetErrorHandler("Check_Dir_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local..BulkDeclareString(sDir, sSubDir)
+V.Local.bExists.Declare(Boolean)
+V.Local.i.Declare(Long)
+
+'Files\WEB_ORDERS 
+F.Intrinsic.String.Build("{0}\WEB_ORDERS",V.Caller.FilesDir,V.Local.sDir)
+F.Intrinsic.File.DirExists(v.Local.sDir,v.Local.bExists) 
+F.Intrinsic.Control.If(V.Local.bExists,=,False) 
+	F.Intrinsic.File.CreateDir(V.Local.sDir) 
+Function.Intrinsic.Control.EndIf
+F.Intrinsic.String.Split("INV_Running*!*UPLOADED*!*WEB_ERRORS*!*IS_RUNNING","*!*",V.Local.sSubDir) 
+F.Intrinsic.Control.For(v.Local.i,0,v.Local.sSubDir.UBound,1) 
+	F.Intrinsic.String.Build("{0}\{1}",V.Local.sDir,V.Local.sSubDir(V.Local.i).Trim,V.Local.sSubDir(V.Local.i)) 
+	f.Intrinsic.File.DirExists(V.Local.sSubDir(v.Local.i),V.Local.bExists) 
+	F.Intrinsic.Control.If(V.Local.bExists,=,False) 
+		F.Intrinsic.File.CreateDir(V.Local.sSubDir(v.Local.i)) 
+	Function.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.i) 
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Check_Dir_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_OnHand.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Check_Dir.End
+
+Program.Sub.Is_Running.Start
+F.Intrinsic.Control.SetErrorHandler("Is_Running_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local.bExists.Declare(Boolean)
+V.Local.iPID.Declare(Long)
+V.Local..BulkDeclareString(sFile, sCurrentPIDProcess)
+
+V.Local.iPID.Set(V.Ambient.PID)
+
+'check to see if program is already running. First check for file
+F.Intrinsic.String.Build("{0}\WEB_ORDERS\INV_Running\Running_{1}.txt",V.Caller.FilesDir,"Y",V.Local.sFile)
+F.Intrinsic.File.Exists(V.Local.sFile,V.Local.bExists)
+F.Intrinsic.Control.If(V.Local.bExists,=,False)
+	'Create Program Status file to let it know its running
+	F.Intrinsic.File.String2File(V.Local.sFile,V.Local.iPID.String)
+Function.Intrinsic.Control.Else
+ 'then the file exists: get the PID from the file to see if the process is still running
+	F.Intrinsic.File.File2String(V.Local.sFile, V.Local.sCurrentPIDProcess)
+	F.Intrinsic.Task.PIDRunning(V.Local.sCurrentPIDProcess,V.Local.bExists)
+	Function.Intrinsic.Control.If(V.Local.bExists, =, TRUE)
+		'the the program is running- don't start new process
+		Function.Intrinsic.Control.End
+
+	Function.Intrinsic.Control.Else
+		'the program has stopped, but did not delete the file. Delete the file and create a new file for current run
+		Function.Intrinsic.File.DeleteFile(V.Local.sFile)
+		F.Intrinsic.File.String2File(V.Local.sFile,V.Local.iPID.String)
+	Function.Intrinsic.Control.EndIf
+Function.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Is_Running_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_OnHand.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Is_Running.End
+
+Program.Sub.Update_OnHand.Start
+F.Intrinsic.Control.SetErrorHandler("Update_OnHand_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local.iC.Declare(Long)
+V.Local.ssql.Declare(String)
+
+'need to compare values: get onHand from salesForce > fill from dictionary GSS onhand
+F.Automation.SalesForce.SelectToDataTable("QTY",True,"Select Id, Name, Available_Quantity__c, '' as QTY_ONHAND from Product2") 
+'need to convert the double in table to a string
+F.Data.DataTable.AddExpressionColumn("QTY", "Available_Quantity__c2", "String", "[Available_Quantity__c]")
+'fill on hand from GSS
+
+'Update API Count
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+
+F.Data.Dictionary.CreateFromSQL("dict", "conG", "Select rTrim(Part) as Name, Round((cast(QTY_ONHAND as Float)-cast(QTY_REQUIRED as Float)),0) As  QTY_ONHAND  From Inventory_MSTR")
+F.Data.Dictionary.SetDefaultReturn("dict", "")
+F.Data.DataTable.FillFromDictionary("QTY", "dict", "Name", "QTY_ONHAND")
+F.Data.Dictionary.Close("dict")
+
+'select to dataview and filter 
+F.Data.DataView.Create("QTY", "QTY_V")
+F.Data.DataView.SetFilter("QTY", "QTY_V", "[Available_Quantity__c2] <> [QTY_ONHAND]")
+'update salesForce with CurrentOnHand
+
+F.Intrinsic.Math.Add(V.Global.iAPICount,V.DataView.Qty!Qty_V.RowCount,V.Global.iAPICount)
+
+'loop through the view
+F.Intrinsic.Control.For(V.Local.iC, 0, Variable.DataView.QTY!QTY_V.RowCount--, 1)
+	F.Intrinsic.String.Build("Update Product2 Set Available_Quantity__c = '{0}' where ID = '{1}'", Variable.DataView.QTY!QTY_V(V.Local.iC).QTY_ONHAND!FieldValTrim ,Variable.DataView.QTY!QTY_V(V.Local.iC).ID!FieldValTrim, V.Local.ssql)
+	F.Automation.SalesForce.ExecuteSQL(v.Local.sSQL)
+F.Intrinsic.Control.Next(v.Local.iC)
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Update_OnHand_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_OnHand.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Update_OnHand.End
+
+Program.Sub.Unload.Start
+F.Intrinsic.Control.SetErrorHandler("Unload_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local.sFile.Declare(String)
+
+F.Intrinsic.String.Build("{0}: {1} - End:{2}",V.Global.sFileContents,V.Global.iAPICount,V.Ambient.Now,V.Global.sFileContents)
+'Save the new value to the file
+F.Intrinsic.File.String2File(V.Global.sFilePath,V.Global.sFileContents)
+
+'path where file exists
+F.Intrinsic.String.Build("{0}\WEB_ORDERS\INV_Running\Running_{1}.txt",V.Caller.FilesDir,"Y",V.Local.sFile)
+'delete file for the next run
+Function.Intrinsic.File.DeleteFile(V.Local.sFile)
+'close connection
+Function.ODBC.Connection!conG.Close
+'end program
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Unload_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_OnHand.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	Function.Intrinsic.Control.End
+
+Function.Intrinsic.Control.EndIf
+Program.Sub.Unload.End
+
+Program.Sub.IsActive.Start
+F.Intrinsic.Control.SetErrorHandler("IsActive_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local.iC.Declare(Long)
+V.Local..BulkDeclareString(ssql, sPricebook2Id, sPricebookEntry)
+
+F.Intrinsic.String.Build("Select ID FROM PRICEBOOK2 Where Name = '{0}'", "Standard Price Book", V.Local.ssql)
+F.Automation.SalesForce.SelectToDataTable("PRICEBOOK2",True,V.Local.ssql) 
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+
+V.Local.sPricebook2Id.Set(V.DataTable.PRICEBOOK2(0).ID!FieldValTrim)
+F.Data.DataTable.Close("PRICEBOOK2")
+
+Function.Automation.SalesForce.SelectToDataTable("TEMP", True, "Select ID As Product2ID, Name as PART, IsActive As IsActive_SF, ID as PRODUCT_ID, '' as IsActive_GSS From Product2")
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+
+F.Data.Dictionary.CreateFromSQL("dict", "conG", "Select LTRIM(RTRIM(PART)) AS PART, FLAG_INACTIVE as IsActive_GSS From INVENTORY_MSTR")
+F.Data.Dictionary.SetDefaultReturn("dict", "")
+F.Data.DataTable.FillFromDictionary("TEMP", "dict", "PART", "IsActive_GSS")
+F.Data.Dictionary.Close("dict")
+
+F.Data.DataTable.AddExpressionColumn("TEMP", "D", "Boolean", "IIF(IsActive_GSS = 'Y', 0, 1)")
+F.Data.DataTable.AddExpressionColumn("TEMP", "C", "String", "IIF(IsActive_GSS = 'Y', '0', '1')")
+
+'loop through table and update where values are different
+F.Intrinsic.Control.For(V.Local.iC, 0, V.DataTable.TEMP.RowCount--, 1)
+
+	Function.Intrinsic.Control.If(V.DataTable.TEMP(v.Local.iC).IsActive_SF!Fieldvaltrim, <>, V.DataTable.TEMP(v.Local.iC).D!Fieldvaltrim)
+		'update two tables, get ID's
+		F.Intrinsic.String.Build("Update Product2 Set IsActive='{0}'  Where ID = '{1}'", V.DataTable.TEMP(v.Local.iC).C!Fieldvaltrim, V.DataTable.TEMP(v.Local.iC).Product2ID!Fieldvaltrim,V.Local.ssql)
+		F.Automation.SalesForce.ExecuteSQL(v.Local.ssql) 
+		F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+		F.Intrinsic.String.Build("Select ID FROM PricebookEntry  Where Pricebook2ID = '{0}' And Product2ID = '{1}'", V.Local.sPricebook2Id, V.DataTable.TEMP(v.Local.iC).Product2ID!Fieldvaltrim,V.Local.ssql)
+		F.Automation.SalesForce.SelectToDataTable("PRICEBOOK2",True,V.Local.ssql)
+		F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+		
+		Function.Intrinsic.Control.If(V.DataTable.PRICEBOOK2.RowCount, >, 0)
+			V.Local.sPricebookEntry.Set(V.DataTable.PRICEBOOK2(0).ID!FieldValTrim)
+			F.Data.DataTable.Close("PRICEBOOK2")
+			F.Intrinsic.String.Build("UPDATE PricebookEntry Set IsActive = '{0}' Where ID = '{1}'",V.DataTable.TEMP(v.Local.iC).C!Fieldvaltrim, V.Local.sPricebookEntry,v.Local.sSQL) 
+			F.Automation.SalesForce.ExecuteSQL(v.Local.sSQL)
+			F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+		Function.Intrinsic.Control.Else
+			F.Data.DataTable.Close("PRICEBOOK2")
+		Function.Intrinsic.Control.EndIf
+		
+	Function.Intrinsic.Control.EndIf
+F.Intrinsic.Control.Next(V.Local.iC)
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("IsActive_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_OnHand.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+'	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.IsActive.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$DH1$}$6/14/2017 4:48:44 PM$}$False
+${$3$}$0$}$$}$0$}$-1$}$$}$12:00:00 AM$}$This project will upload sales order via the web importer
+Program.Sub.Comments.End
