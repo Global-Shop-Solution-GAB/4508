@@ -1,0 +1,364 @@
+Program.Sub.ScreenSU.Start
+Gui.F_Price_Update..Create
+Gui.F_Price_Update..Size(5475,2715)
+Gui.F_Price_Update..MinX(0)
+Gui.F_Price_Update..MinY(0)
+Gui.F_Price_Update..Position(0,0)
+Gui.F_Price_Update..BackColor(-2147483633)
+Gui.F_Price_Update..MousePointer(0)
+Gui.F_Price_Update..Event(UnLoad,UNLOAD)
+Gui.F_Price_Update..Caption("SalesForce Price Update")
+Gui.F_Price_Update.cmdUpdate.Create(Button)
+Gui.F_Price_Update.cmdUpdate.Size(855,375)
+Gui.F_Price_Update.cmdUpdate.Position(345,1335)
+Gui.F_Price_Update.cmdUpdate.Caption("Update")
+Gui.F_Price_Update.cmdUpdate.Event(Click,cmdUpdate_Click)
+Gui.F_Price_Update.cmdCancel.Create(Button)
+Gui.F_Price_Update.cmdCancel.Size(855,375)
+Gui.F_Price_Update.cmdCancel.Position(1350,1335)
+Gui.F_Price_Update.cmdCancel.Caption("Cancel")
+Gui.F_Price_Update.cmdCancel.Event(Click,UNLOAD)
+Gui.F_Price_Update.txtProductLine.Create(TextBox,"Example: PL,MC,DF",True,4635,300,0,360,870,True,0,"Arial",8,-2147483643,1)
+Gui.F_Price_Update.txtProductLine.DefaultValue("")
+Gui.F_Price_Update.txtProductLine.Event(GotFocus,txtProductLine_GotFocus)
+Gui.F_Price_Update.lbl1.Create(Label,"Enter in Product Lines Separated By Commas",True,3465,255,0,345,660,True,0,"Arial",8,-2147483633,0)
+Program.Sub.ScreenSU.End
+
+Program.Sub.Preflight.Start
+V.Global.sProduct2Id.Declare(String)
+V.Global.iActive.Declare(Long)
+V.Global.iAPICount.Declare(Long)
+V.Global.sFilePath.Declare(String)
+V.Global.sFileContents.Declare(String)
+V.Global.fPrice.Declare(Float)
+Program.Sub.Preflight.End
+
+Program.Sub.Main.Start
+F.Intrinsic.Control.SetErrorHandler("Main_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local..BulkDeclareString(sRet, sConString)
+V.Local.bExists.Declare(Boolean)
+V.Local.sDate.Declare(String)
+V.Local.iDay.Declare(Long)
+V.Local.iHour.Declare(Long)
+
+F.Intrinsic.Date.Weekday(V.Ambient.Now,V.Local.iDay)
+F.Intrinsic.Date.Hour(V.Ambient.Now,V.Local.iHour)
+
+
+F.Intrinsic.Control.If(V.Local.iDay,>,1,"AND",V.Local.iDay,<,7)
+	F.Intrinsic.Control.If(V.Local.iHour,>,5,"AND",V.Local.iHour,<,19)
+		
+		'If the directories don't exist, go ahead and create them
+		F.Intrinsic.String.Build("{0}\API_COUNT",V.Caller.FilesDir,V.Global.sFilePath)
+		F.Intrinsic.File.DirExists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,=,False)
+			F.Intrinsic.File.CreateDir(V.Global.sFilePath)
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("{0}\Inventory_SYNC",V.Global.sFilePath,V.Global.sFilePath)
+		F.Intrinsic.File.DirExists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,=,False)
+			F.Intrinsic.File.CreateDir(V.Global.sFilePath)
+		F.Intrinsic.Control.EndIf
+		
+		F.Intrinsic.String.Build("{0}\API_Count_{1}.txt",V.Global.sFilePath,V.Local.sDate,V.Global.sFilePath)
+		F.Intrinsic.File.Exists(V.Global.sFilePath,V.Local.bExists)
+		
+		F.Intrinsic.Control.If(V.Local.bExists,<>,False)
+			F.Intrinsic.File.File2String(V.Global.sFilePath,V.Global.sFileContents)
+			F.Intrinsic.String.Build("{0}{1}{2}",V.Global.sFileContents,V.Ambient.NewLine,V.Ambient.Now,V.Global.sFileContents)
+		F.Intrinsic.Control.Else
+			V.Global.sFileContents.Set(V.Ambient.Now)
+		F.Intrinsic.Control.EndIf
+		
+		V.Global.iAPICount.Set(0)
+		
+		'Dawn Hughes 8/30/2017
+		'this program will sync inventory from GSS to salesforce when an inventory part is saved- either in new inventory or from open
+		'14530 is the post save hook on the Part Generator screen
+		Function.Intrinsic.Control.If(V.Caller.Hook,=,10185,"OR",V.Caller.Hook,=,14530)
+			'GSS Connection
+			F.ODBC.Connection!conG.OpenConnection(v.Ambient.PDSN,v.Ambient.PUser,v.Ambient.PPass) 
+			'Sales Force Connection
+			F.ODBC.Connection!conG.ExecuteAndReturn("Select rTrim(USER_NAME), rTrim(PASS), rTrim(SECTOK) From GCG_4508_CONNECTION Where NUM = '1'", V.Local.sRet)
+			F.Intrinsic.String.Split(V.Local.sRet, "*!*", V.Local.sRet)
+			F.Intrinsic.String.Build("Offline=False;Password={1};Security Token={2};User={0};Use Sandbox=False",V.Local.sRet(0),V.Local.sRet(1),V.Local.sRet(2),v.Local.sConString) 
+			'Set Connection String 
+			F.Automation.SalesForce.SetConnectionString(V.Local.sConString)
+			
+			'save part in sales force
+			Function.Intrinsic.Control.CallSub(sync_inventory)
+			'save part in price books
+			
+			F.Intrinsic.Control.If(V.Caller.Hook,=,10185,"OR",V.Caller.Hook,=,14530)
+				Function.Intrinsic.Control.CallSub(sync_pricebook)
+			F.Intrinsic.Control.EndIf
+			
+			F.Intrinsic.Control.CallSub(Unload)
+		F.Intrinsic.Control.ElseIf(V.Caller.Hook,>=,1000000)
+			F.ODBC.Connection!conG.OpenConnection(V.Ambient.PDSN,V.Ambient.PUser,V.Ambient.PPass)
+			'Sales Force Connection
+			F.ODBC.Connection!conG.ExecuteAndReturn("Select rTrim(USER_NAME), rTrim(PASS), rTrim(SECTOK) From GCG_4508_CONNECTION Where NUM = '1'", V.Local.sRet)
+			F.Intrinsic.String.Split(V.Local.sRet, "*!*", V.Local.sRet)
+			F.Intrinsic.String.Build("Offline=False;Password={1};Security Token={2};User={0};Use Sandbox=False",V.Local.sRet(0),V.Local.sRet(1),V.Local.sRet(2),v.Local.sConString) 
+			'Set Connection String 
+			F.Automation.SalesForce.SetConnectionString(V.Local.sConString)
+			
+			gui.F_Price_Update..Show
+		Function.Intrinsic.Control.EndIf
+	F.Intrinsic.Control.EndIf
+F.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Main_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_Sync.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Main.End
+
+Program.Sub.Sync_Inventory.Start
+F.Intrinsic.Control.SetErrorHandler("Sync_Inventory_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local..BulkDeclareString(sPart, sRev, sLoc, ssql, sFields, sValues, sID, sTemp)
+V.Local.fQTY.Declare(Float)
+V.Local.iC.Declare(Long)
+V.Local.sPartTemp.Declare(String)
+
+V.Local.iC.Set(0)
+
+F.Intrinsic.Control.If(V.Caller.Hook,=,10185)
+	V.Local.sPart.Set(V.Passed.000007)
+	V.Local.sRev.Set(V.Passed.000008)
+	V.Local.sLoc.Set(V.Passed.000009)
+F.Intrinsic.Control.ElseIf(V.Caller.Hook,=,14530)
+	F.Intrinsic.String.RPad(V.Passed.000001," ",20,V.Local.sPartTemp)
+	V.Local.sPart.Set(V.Local.sPartTemp.Left17)
+	V.Local.sRev.Set(V.Local.sPartTemp.Right3)
+	V.Local.sLoc.Set("")
+F.Intrinsic.Control.Else
+	'Something bad happened. Close the program
+	F.Intrinsic.Control.Callsub(Unload)
+F.Intrinsic.Control.EndIf
+
+
+''put the part and rev together
+F.Intrinsic.String.GSSPartString(V.Local.sPart.Trim, V.Local.sRev.Trim, V.Local.sPart)
+'Gather Data From The Tables
+F.Intrinsic.String.Build("Select * From V_INVENTORY_MSTR Where PART = '{0}' And LOCATION = '{1}'", V.Local.sPart.Trim, V.Local.sLoc, V.Local.ssql)
+F.Data.DataTable.CreateFromSQL("INV_MSTR", "conG", V.Local.ssql)
+F.Intrinsic.String.Build("Select * From V_INVENTORY_MST2 Where PART = '{0}' And LOCATION = '{1}'", V.Local.sPart.Trim, V.Local.sLoc, V.Local.ssql)
+F.Data.DataTable.CreateFromSQL("INV_MST2", "conG", V.Local.ssql)
+
+'set the Is Active variable to 0 or 1 > these work differently
+Function.Intrinsic.Control.If(V.datatable.INV_MSTR(0).FLAG_INACTIVE!FieldValTrim, =, "Y")
+	V.Global.iActive.Set(0)
+Function.Intrinsic.Control.Else
+	V.Global.iActive.Set(1)
+Function.Intrinsic.Control.EndIf
+
+'set the quantity available 
+V.Local.fQTY.Set(V.dataTable.INV_MSTR(0).QTY_ONHAND!FieldValTrim)
+'check to see if it already exists in salesforce
+F.Intrinsic.String.Build("Select Id from Product2 Where Name = '{0}'",V.Local.sPart.Trim, V.Local.sSQL) 
+	'select to datatable. 
+F.Automation.SalesForce.SelectToDataTable("SF_ID",True,v.Local.sSQL)
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+
+F.Intrinsic.Control.If(V.DataTable.SF_ID.RowCount,>,0) 
+	'Means this record already exists in SF so we don't have to add it, but we want that id.
+	V.Global.sProduct2Id.Set(V.DataTable.SF_ID(0).ID!FieldValTrim) 
+	F.Data.DataTable.Close("SF_ID")
+	F.Intrinsic.String.Build("Update Product2 Set Name='{0}', Family='{1}', Description='{2}', Available_Quantity__c='{3}', IsActive='{4}', Description_2__c='{5}', Description_3__c='{6}' Where ID = '{7}'", V.Local.sPart.Trim, V.dataTable.INV_MSTR(0).Product_Line!FieldValStringPSQLFriendly, V.dataTable.INV_MSTR(0).Description!FieldValStringPSQLFriendly, V.Local.fQTY, V.Global.iActive, V.DataTable.INV_MST2(0).Description_2!FieldValStringPSQLFriendly, V.DataTable.INV_MST2(0).Description_3!FieldValStringPSQLFriendly, V.Global.sProduct2Id,V.Local.ssql)
+	F.Automation.SalesForce.ExecuteSQL(v.Local.ssql) 
+	F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+Function.Intrinsic.Control.Else
+	'this product does not exist and we insert
+	'add to sales force inventory
+	V.Local.fQTY.Set(V.DataTable.INV_MSTR(0).Qty_Onhand!FieldValTrim)
+	F.Intrinsic.String.Build("({0},{1},{2},{3},{4},{5},{6})","Name", "Family", "Description", "Available_Quantity__c", "IsActive", "Description_2__c", "Description_3__c", V.Local.sFields)
+	F.Intrinsic.String.Build("('{0}','{1}','{2}','{3}','{4}','{5}','{6}')",V.Local.sPart.Trim, V.dataTable.INV_MSTR(0).Product_Line!FieldValTrim, V.dataTable.INV_MSTR(0).Description!FieldValStringPSQLFriendly, V.Local.fQTY, V.Global.iActive, V.DataTable.INV_MST2(0).Description_2!FieldValStringPSQLFriendly, V.DataTable.INV_MST2(0).Description_3!FieldValStringPSQLFriendly, V.Local.sValues)
+	F.Intrinsic.String.Build("Insert Into Product2 {0} Values {1}",V.Local.sFields,V.Local.sValues,V.Local.sSQL) 
+	'write to sales Force, return ID for pricebook entry
+	F.Automation.SalesForce.ExecuteSQLREturnID(v.Local.sSQL,V.Global.sProduct2Id)
+	F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+Function.Intrinsic.Control.EndIf
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Sync_Inventory_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_Sync.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Sync_Inventory.End
+
+Program.Sub.Sync_Pricebook.Start
+F.Intrinsic.Control.SetErrorHandler("Sync_Pricebook_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+V.Local..BulkDeclareString(ssql, sPricebook2Id, sID)
+V.Local.sPrice.Declare(Float)
+
+F.Intrinsic.Control.If(V.Caller.Hook,=,10185)
+	V.Local.sPrice.Set(V.Passed.000017)
+F.Intrinsic.Control.ElseIf(V.Caller.Hook,=,14530)
+	V.Local.sPrice.Set(0)
+F.Intrinsic.Control.ElseIf(V.Caller.Hook,>=,1000000)
+	V.Local.sPrice.Set(V.Global.fPrice)
+F.Intrinsic.Control.EndIf
+
+'first get PRICEBOOK2.ID
+F.Intrinsic.String.Build("Select ID FROM PRICEBOOK2 Where Name = '{0}'", "Standard Price Book", V.Local.ssql)
+F.Automation.SalesForce.SelectToDataTable("PRICEBOOK2",True,V.Local.ssql)
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+V.Local.sPricebook2Id.Set(V.DataTable.PRICEBOOK2(0).ID!FieldValTrim)
+F.Data.DataTable.Close("PRICEBOOK2")
+'V.Global.sProduct2Id
+'check if there is an entry for this pricebook and product
+F.Intrinsic.String.Build("Select ID FROM PricebookEntry Where Product2ID = '{0}' AND Pricebook2ID = '{1}'", V.Global.sProduct2Id, V.Local.sPricebook2Id, V.Local.ssql)
+F.Automation.SalesForce.SelectToDataTable("SF_PRICE",True,v.Local.sSQL)
+F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+
+F.Intrinsic.Control.If(V.DataTable.SF_PRICE.RowCount,>,0)
+	'then the entry already exists and we just update
+	V.Local.sID.Set(V.DataTable.SF_PRICE(0).ID!FieldValTrim)
+	F.Intrinsic.String.Build("UPDATE PricebookEntry Set UnitPrice = '{0}', IsActive = '{1}' Where ID = '{2}'", V.Local.sPrice, V.Global.iActive,V.Local.sID,v.Local.sSQL) 
+	F.Automation.SalesForce.ExecuteSQL(v.Local.sSQL)
+	F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+Function.Intrinsic.Control.Else
+	F.Intrinsic.String.Build("Insert Into PricebookEntry (Product2ID,Pricebook2ID,UnitPrice,UseStandardPrice, IsActive) Values ('{0}','{1}','{2}','{3}', '{4}')", V.Global.sProduct2Id,V.Local.sPricebook2Id, V.Local.sPrice,"false",V.Global.iActive,v.Local.sSQL) 
+	F.Automation.SalesForce.ExecuteSQL(v.Local.sSQL)
+	F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+Function.Intrinsic.Control.EndIf
+
+F.Data.DataTable.Close("SF_PRICE")
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("Sync_Pricebook_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_Sync.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.Sync_Pricebook.End
+
+Program.Sub.cmdUpdate_Click.Start
+F.Intrinsic.Control.SetErrorHandler("cmdUpdate_Click_Err")
+F.Intrinsic.Control.ClearErrors
+
+V.Local.sError.Declare(String)
+V.Local.sSQL.Declare(String)
+V.Local.sProductLine.Declare(String)
+
+gui.F_Price_Update..Visible(False)
+F.Intrinsic.UI.InvokeWaitDialog("Update SalesForce Prices. Depending on the number of parts this could take awhile.")
+
+F.Intrinsic.String.Replace(V.Screen.F_Price_Update!txtProductLine.Text,",","','",V.Local.sProductLine)
+
+F.Intrinsic.String.Build("SELECT PART,FLAG_INACTIVE,AMT_PRICE FROM INVENTORY_MSTR WHERE PRODUCT_LINE IN ('{0}') AND AMT_PRICE <> '0' AND FLAG_INACTIVE <> 'Y'",V.Local.sProductLine,V.Local.sSQL)
+F.ODBC.Connection!conG.OpenLocalRecordSetRO("rstAmtPrice",V.Local.sSQL)
+
+F.Intrinsic.Control.DoUntil(V.ODBC.conG!rstAmtPrice.EOF,=,True)
+	'check to see if it already exists in salesforce
+	F.Intrinsic.String.Build("Select Id from Product2 Where Name = '{0}'",V.ODBC.conG!rstAmtPrice.FieldValTrim!PART, V.Local.sSQL) 
+		'select to datatable. 
+	F.Automation.SalesForce.SelectToDataTable("ID",True,v.Local.sSQL)
+	F.Intrinsic.Math.Add(V.Global.iAPICount,1,V.Global.iAPICount)
+	
+	F.Intrinsic.Control.If(V.DataTable.ID.RowCount,>,0)
+		V.Global.sProduct2Id.Set(V.DataTable.ID(0).ID!FieldValTrim)
+	F.Intrinsic.Control.Else
+		F.ODBC.conG!rstAmtPrice.MoveNext
+		F.Data.DataTable.Close("ID")
+		F.Intrinsic.Control.GoTo("Skip")
+	F.Intrinsic.Control.EndIf
+	
+	F.Data.DataTable.Close("ID")
+	
+	'set the Is Active variable to 0 or 1 > these work differently
+	Function.Intrinsic.Control.If(V.ODBC.conG!rstAmtPrice.FieldValTrim!FLAG_INACTIVE, =, "Y")
+		V.Global.iActive.Set(0)
+	Function.Intrinsic.Control.Else
+		V.Global.iActive.Set(1)
+	Function.Intrinsic.Control.EndIf
+	
+	V.Global.fPrice.Set(V.ODBC.conG!rstAmtPrice.FieldValFloat!AMT_PRICE)
+	
+	F.Intrinsic.Control.CallSub(Sync_Pricebook)
+	F.Intrinsic.Control.Label("Skip")
+	F.ODBC.conG!rstAmtPrice.MoveNext
+F.Intrinsic.Control.Loop
+
+F.ODBC.conG!rstAmtPrice.Close
+
+F.Intrinsic.Control.CallSub(UNLOAD)
+
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("cmdUpdate_Click_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_Sync.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.CallSub(unload)
+Function.Intrinsic.Control.EndIf
+Program.Sub.cmdUpdate_Click.End
+
+Program.Sub.UNLOAD.Start
+F.Intrinsic.Control.SetErrorHandler("UNLOAD_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+
+F.Intrinsic.String.Build("{0}: {1} - End:{2}",V.Global.sFileContents,V.Global.iAPICount,V.Ambient.Now,V.Global.sFileContents)
+F.Intrinsic.File.String2File(V.Global.sFilePath,V.Global.sFileContents)
+
+'close the connection and program
+F.ODBC.Connection!conG.Close 
+F.Intrinsic.Control.End
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("UNLOAD_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_Sync.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.End
+
+Function.Intrinsic.Control.EndIf
+Program.Sub.UNLOAD.End
+
+Program.Sub.txtProductLine_GotFocus.Start
+F.Intrinsic.Control.SetErrorHandler("txtProductLine_GotFocus_Err")
+F.Intrinsic.Control.ClearErrors
+V.Local.sError.Declare(String)
+V.Local.bIsInString.Declare(Boolean)
+
+F.Intrinsic.String.IsInString(V.Screen.F_Price_Update!txtProductLine.Text,"Example",True,V.Local.bIsInString)
+
+F.Intrinsic.Control.If(V.Local.bIsInString,=,True)
+	Gui.F_Price_Update.txtProductLine.Text("")
+F.Intrinsic.Control.EndIf
+
+
+F.Intrinsic.Control.ExitSub
+F.Intrinsic.Control.Label("txtProductLine_GotFocus_Err")
+F.Intrinsic.Control.If(V.Ambient.ErrorNumber,<>,0)
+	Function.Intrinsic.String.Concat("Project: GCG_4508_Inventory_Sync.g2u",V.Ambient.Newline,V.Ambient.Newline,"Subroutine: ",V.Ambient.CurrentSubroutine,V.Ambient.NewLine,"Error Occurred ",V.Ambient.ErrorNumber," with description ",V.Ambient.ErrorDescription,V.Local.sError)
+	F.Intrinsic.UI.Msgbox(V.Local.sError)
+	Function.Intrinsic.Control.End
+
+Function.Intrinsic.Control.EndIf
+Program.Sub.txtProductLine_GotFocus.End
+
+Program.Sub.Comments.Start
+${$0$}$$}$DH1$}$6/13/2017 1:39:49 PM$}$False
+${$3$}$0$}$$}$0$}$-1$}$$}$12:00:00 AM$}$This project will upload sales order via the web importer
+Program.Sub.Comments.End
