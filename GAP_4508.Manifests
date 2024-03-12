@@ -1,0 +1,4 @@
+1GCG_4508_CONNECTION$!$2016.2$!$3$!$False$!$$!$0%!%2NUM#!#CHAR(1)#!#False#!#False#!#False#!#$!$USER_NAME#!#CHAR(50)#!#False#!#False#!#False#!#$!$PASS#!#CHAR(50)#!#False#!#False#!#False#!#$!$SECTOK#!#CHAR(50)
+)#!#False#!#False#!#False#!#$!$%!%3%!%%!%5GAP 4508%!%^*!*^1GCG_4508_CONTACT$!$2016.2$!$3$!$False$!$$!$0%!%2LAST_CONTACT#!#VARCHAR(50)#!#False#!#False#!#False#!#$!$LAST_DATE#!#VARCHAR(30)#!#False#!#False#!#False#!#$!$COLUMN0#!#VARCHAR(50)#!#False#!#False#!#False#!#$!$COLUMN1#!#VARCHAR(30)
+)#!#False#!#False#!#False#!#$!$%!%3%!%%!%5GAP 4508%!%^*!*^1GCG_4508_TRACKING_NO$!$2016.2$!$3$!$False$!$$!$0%!%2ORDER_NO#!#CHAR(7)#!#False#!#False#!#False#!#$!$ORDER_SUFFIX#!#CHAR(4)#!#False#!#False#!#False#!#$!$SF_ID#!#CHAR(20)
+)#!#False#!#False#!#False#!#$!$%!%3%!%%!%5GAP 4508%!%^*!*^
